@@ -59,5 +59,3 @@ The script can be customized with the following parameters.
 | `-s`       | `--seconds`   | `s`: int                   | 3                                                 | Time between sending packets                   |
 | `-l`       | `--location`  | `lat`: int <br> `lng`: int | 47.3763399, 8.5312562 <br/> Kasernenareal, Zurich | Latitude and Longitude of drone starting point |
 
-# ToDo
-- Add DJI proprietary format
