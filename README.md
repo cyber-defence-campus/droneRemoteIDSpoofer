@@ -1,5 +1,5 @@
 # Drone Remote ID Spoofer
-This python scripts allows to spoof drone Remote IDs via Wifi . It supports the ASD-STAN format. It can spoof a single drone or multiple drones, randomly or in a specific area. 
+This python scripts allows to spoof drone Remote IDs via Wifi . It supports the ASD-STAN format which is used for example by Parrot drones. It can spoof a single drone or multiple drones, randomly or in a specific area. 
 
 **Disclaimer**: This repository was created by students as part of a thesis. It is not meant to be maintained nor updated. It is a proof of concept and is not intended for production use. The authors do not take any responsibility or liability for the use of the software. Please exercise caution and use at your own risk.
 
