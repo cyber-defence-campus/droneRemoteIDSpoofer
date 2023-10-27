@@ -37,12 +37,12 @@ A single Remote ID with random values will be sent.
 ### 2. Spoof multiple Remote IDs
 With that feature, `m` Remote IDs are spoofed. Parameters cannot be controlled. The drones will be spoofed at fixed random position.
 
-`$ sudo python3 main.py -i <interface-name> -r <m>`
+`$ sudo python3 ./spoof_drones.py -i <interface-name> -r <m>`
 
 ### 3. Spoof multiple Remote IDs around a specific location
 With that feature, `m` Remote IDs are spoofed around the specified coordinates. The drones will be spoofed at fixed random position around the specified coordinates.
 
-`$ sudo python3 main.py -i <interface-name> -r <m> -l '<latitude> <longitude>'`
+`$ sudo python3 ./spoof_drones.py -i <interface-name> -r <m> -l '<latitude> <longitude>'`
 
 
 
