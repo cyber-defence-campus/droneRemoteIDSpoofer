@@ -56,6 +56,6 @@ The script can be customized with the following parameters.
 | `-i`       | `--interface` | `n`: str                   | wlx00c0ca99160d                                   | Interface name                                 |
 | `-m`       | `--manual`    | -                          | -                                                 | Spoof one drone and control its movement       |
 | `-r`       | `--random`    | `m`: int                   | 1                                                 | Spoof `m` drones that move automatically       |
-| `-s`       | `--seconds`   | `s`: int                   | 3                                                 | Time between sending packets                   |
+| `-n`       | `--seconds`   | `s`: int                   | 3                                                 | Time between sending packets                   |
 | `-l`       | `--location`  | `lat`: int <br> `lng`: int | 47.3763399, 8.5312562 <br/> Kasernenareal, Zurich | Latitude and Longitude of drone starting point |
 
