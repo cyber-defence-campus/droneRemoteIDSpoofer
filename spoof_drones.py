@@ -276,50 +276,31 @@ def spoof_automatic_drones(args: argparse.Namespace) -> None:
     """
     seconds: int = args.interval
     lat_, lng_ = args.location
-    send_next = datetime.now() + timedelta(seconds=seconds)
     step = 10000
 
-    if args.random <= 1:
-        logging.info("Starting in DEFAULT MODE - spoofing one drone.")
-        serial = args.serial.encode() if args.serial else get_random_serial_number()
+    logging.info(f"Starting in RANDOM MODE - spoofing {args.random} drones.")
+    drone_list = []
+    
+    n_drones = args.random
+    for i in range(n_drones):
+        serial = get_random_serial_number()
         pilot_loc = get_random_pilot_location(lat_, lng_)
-        logging.info(f"Drone with SERIAL NUMBER {serial} and LOCATION [LAT LNG] {lat_}, {lng_} created.")
-        try:
-            lat_i, lng_i = lat_, lng_
-            while True:
-                if send_next < datetime.now():  # only send packets every 3 seconds
-                    packet = create_packet(lat_i, lng_i, serial, pilot_loc)
-                    lat_i, lng_i = random_location(lat_i, lng_i, step)
-                    send(packet, args.interface)
-                    send_next = datetime.now() + timedelta(seconds=seconds)
-        except KeyboardInterrupt:
-            logging.info("Script interrupted. Shutting down..")
-    else:
-        logging.info(f"Starting in RANDOM MODE - spoofing {args.random} drones.")
-        drone_list = []
-        
-        n_drones = args.random
-        for i in range(n_drones):
-            serial = get_random_serial_number()
-            pilot_loc = get_random_pilot_location(lat_, lng_)
-            drone_list.append((serial, pilot_loc, lat_, lng_))
-            logging.info(f"Drone with SERIAL NUMBER {serial} created.")
+        drone_list.append((serial, pilot_loc, lat_, lng_))
+        logging.info(f"Drone with SERIAL NUMBER {serial} created.")
 
-        try:
-            while True:
-                if send_next < datetime.now():  # only send packets every 3 seconds
-                    packet_list = []
-                    for i, tup in enumerate(drone_list):
-                        serial_i, pilot_loc_i, lat_prev, lng_prev = tup
-                        lat_i, lng_i = random_location(lat_prev, lng_prev, step)
-                        drone_list[i] = serial_i, pilot_loc_i, lat_i, lng_i
-                        packet = create_packet(lat_i, lng_i, serial_i, pilot_loc_i)
-                        packet_list.append(packet)
+    try:
+        packet_list = []
+        for i, tup in enumerate(drone_list):
+            serial_i, pilot_loc_i, lat_prev, lng_prev = tup
+            lat_i, lng_i = random_location(lat_prev, lng_prev, step)
+            drone_list[i] = serial_i, pilot_loc_i, lat_i, lng_i
+            packet = create_packet(lat_i, lng_i, serial_i, pilot_loc_i)
+            packet_list.append(packet)
 
-                    send(packet_list, args.interface)
-                    send_next = datetime.now() + timedelta(seconds=seconds)
-        except KeyboardInterrupt:
-            logging.info("Script interrupted. Shutting down..")
+        send(packet_list, interface=args.interface, loop = 1, inter=seconds)
+    
+    except KeyboardInterrupt:
+        logging.info("Script interrupted. Shutting down..")
 
 
 def random_location(lat_: int, lng_: int, distance: int = 100000) -> tuple[int, int]:
@@ -360,6 +341,9 @@ def main() -> None:
         logging.info("Starting in MANUAL MODE - spoofing one user controlled drone.")
         spoof_controlled_drone(args)
     else:
+        if args.random == 0:
+            logging.info(f"When using random mode (-r) the minimum value is 1.")
+            sys.exit(0)
         spoof_automatic_drones(args)
 
 
