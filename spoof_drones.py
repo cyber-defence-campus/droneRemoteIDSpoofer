@@ -9,7 +9,6 @@ import random
 from datetime import datetime, timedelta
 
 import scapy.layers.dot11 as scapy
-from scapy.sendrecv import sendp
 
 logging.basicConfig(level=logging.NOTSET, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -64,7 +63,7 @@ def parse_args() -> argparse.Namespace:
                            help="random mode, spoof multiple random drones without motion")
     argparser.add_argument("-s", "--serial", type=lambda x: x if 20 >= len(x) > 0 else False,
                            help="set drones serial number. (incompatible with multiple drones)")
-    argparser.add_argument("-n", "--interval", type=float, default=3,
+    argparser.add_argument("-n", "--interval", type=float, default=1,
                            help="interval in seconds, time between sending packets")
     argparser.add_argument("-l", "--location", nargs=2, metavar=("LATITUDE", "LONGITUDE"), action=ParseLocationAction,
                            help="start location, to customise the starting point")
@@ -266,7 +265,6 @@ def spoof_automatic_drones(args: argparse.Namespace) -> None:
     drone_list = []
     send_next = datetime.now() + timedelta(seconds=seconds)
 
-    
     n_drones = args.random
     for i in range(n_drones):
         serial = get_random_serial_number()

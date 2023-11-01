@@ -37,12 +37,12 @@ A single Remote ID with random values will be sent.
 ### 2. Spoof multiple Remote IDs
 With that feature, `m` Remote IDs are spoofed. Parameters cannot be controlled. The drones will be spoofed at fixed random position.
 
-`$ sudo python3 main.py -i <interface-name> -r <m>`
+`$ sudo python3 ./spoof_drones.py -i <interface-name> -r <m>`
 
 ### 3. Spoof multiple Remote IDs around a specific location
 With that feature, `m` Remote IDs are spoofed around the specified coordinates. The drones will be spoofed at fixed random position around the specified coordinates.
 
-`$ sudo python3 main.py -i <interface-name> -r <m> -l '<latitude> <longitude>'`
+`$ sudo python3 ./spoof_drones.py -i <interface-name> -r <m> -l '<latitude> <longitude>'`
 
 
 
@@ -56,6 +56,6 @@ The script can be customized with the following parameters.
 | `-i`       | `--interface` | `n`: str                   | wlx00c0ca99160d                                   | Interface name                                 |
 | `-m`       | `--manual`    | -                          | -                                                 | Spoof one drone and control its movement       |
 | `-r`       | `--random`    | `m`: int                   | 1                                                 | Spoof `m` drones that move automatically       |
-| `-s`       | `--seconds`   | `s`: int                   | 3                                                 | Time between sending packets                   |
+| `-n`       | `--seconds`   | `s`: int                   | 3                                                 | Time between sending packets                   |
 | `-l`       | `--location`  | `lat`: int <br> `lng`: int | 47.3763399, 8.5312562 <br/> Kasernenareal, Zurich | Latitude and Longitude of drone starting point |
 
