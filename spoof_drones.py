@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta
 
 import scapy.layers.dot11 as scapy
-
+from scapy.config import conf
 logging.basicConfig(level=logging.NOTSET, format='%(asctime)s %(levelname)s %(message)s')
 
 
