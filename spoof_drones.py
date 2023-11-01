@@ -10,10 +10,8 @@ from datetime import datetime, timedelta
 
 import scapy.layers.dot11 as scapy
 from scapy.sendrecv import sendp
-from scapy.config import conf
 
 logging.basicConfig(level=logging.NOTSET, format='%(asctime)s %(levelname)s %(message)s')
-
 
 
 DEFAULT_LAT: int = 473763399
@@ -190,31 +188,6 @@ def create_packet(lat_: int, lng_: int, serial: bytes, pilot_loc: tuple[int, int
                                           addr3=src_addr) / scapy.Dot11Beacon() / ie_ssid / ie_vendor_parrot
 
 
-def send(packets: list[scapy.Packet], interface: str, loop: int = 0, inter: float = 0) -> None:
-    """
-    Method that sends Wi-Fi packets via an interface. It can be configured to send the packets only once (no loop =
-    0) or multiple times (loop = 1). Similarly, the interval on how often the packets are sent can be configured in
-    the parameter inter.
-
-    Args:
-        packets (list[scapy.Packet]): Wi-Fi packets to send.
-        interface (str): Interface name.
-        loop (int): 0 if send once, otherwise 1. Defaults to 0.
-        inter (float): Interval in seconds. Defaults to 0.
-
-    """
-    try:
-        sendp(packets, iface=interface, loop=loop, inter=inter)
-    except PermissionError as err:
-        logging.critical(f"This script requires root privilege. Please run the script with sudo. extra: {err}")
-    except OSError as err:
-        logging.critical(f"Looks like there may be a problem with the INTERFACE. Please check the spelling of the "
-                         f"name and its connection. extra: {err}")
-    except KeyboardInterrupt:
-        sys.exit(0)
-        logging.info("Script interrupted. Shutting down..")
-
-
 def spoof_controlled_drone(args: argparse.Namespace) -> None:
     """
     Sends regularly (defaults to every 3 seconds) another Wi-Fi Beacon frame (static information) according to ASTM
@@ -325,7 +298,6 @@ def spoof_automatic_drones(args: argparse.Namespace) -> None:
 
                 send_next = datetime.now() + timedelta(seconds=seconds)
         s.close()
-
     except KeyboardInterrupt:
         s.close()
         sys.exit(0)
