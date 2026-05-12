@@ -20,7 +20,9 @@ Note that CLI flags override config values.
 - `transport` (string): `"wifi"`, `"ble"`, or `"both"`. Default: `"wifi"`.
 - `ble` (object): BLE-specific settings (optional).
   - `adapter` (string): HCI adapter name. Default: `"hci0"`.
-  - `advertising_interval_ms` (int): time per BLE advertisement in ms. Default: `200`.
+  - `advertising_interval_ms` (int): interval for BLE 4 legacy advertisements. Default: `200`.
+  - `extended_interval_ms` (int): pulse rate for BLE 5 extended pack. Default: same as `advertising_interval_ms`.
+  - `extended` (bool): enable BLE 5 Extended Advertising (Coded PHY). Default: `false`.
 - `wifi` (object): Wi-Fi-specific settings (optional).
   - `channel` (int): Wi-Fi channel for injection. Default: `6`.
   - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`.
@@ -72,12 +74,14 @@ Sends ASTM F3411-19 payloads inside Wi-Fi beacon frames with a vendor-specific
 IE (OUI 0xFA0BBC). Requires a Wi-Fi adapter in monitor mode. Note that many receivers will not parse those, specially phone applications don't do good with this method.
 
 ### `ble`
-Sends ASTM F3411-22 payloads as BLE `ADV_NONCONN_IND` advertisements with
-Service Data UUID 0xFFFA. Requires a Linux Bluetooth adapter (HCI) and root.
+Sends ASTM F3411-22 payloads as BLE advertisements with Service Data UUID 0xFFFA. 
+Requires a Linux Bluetooth adapter (HCI) and root.
 
-One message per advertisement — the tool rotates through message types, sending
-Location at 3x frequency. Multiple drones are time-multiplexed on the single
-radio. With 200ms per ad, ~5 drones fit in a 1-second cycle.
+**Legacy Mode (BLE 4)**: Uses `ADV_NONCONN_IND` packets. Since one legacy advertisement can only hold a single ASTM message, the tool **rotates** through a sequence (2x Location + 2x Statics) to transmit the full drone state. Each drone occupies the radio for `4 * advertising_interval_ms` (e.g., 800ms by default).
+
+**Extended Mode (BLE 5)**: Uses LE Coded PHY to transmit a full **ODID Message Pack** (containing all drone data) in a single advertisement. For maximum compatibility, the tool still maintains the Legacy rotation in the background while the Extended advertisement pulses.
+
+In this mode, `advertising_interval_ms` sets the interval for the legacy advertisements, while `extended_interval_ms` sets the interval for the extended advertisements.
 
 ### `both`
 Sends on Wi-Fi and BLE simultaneously.

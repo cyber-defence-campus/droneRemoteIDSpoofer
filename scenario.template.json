@@ -7,7 +7,9 @@
     "transport": "wifi",
     "ble": {
       "adapter": "hci0",
-      "advertising_interval_ms": 200
+      "advertising_interval_ms": 200,
+      "extended_interval_ms": 200,
+      "extended": false
     }
   },
   "drones": [
