@@ -8,7 +8,7 @@
     "ble": {
       "adapter": "hci0",
       "advertising_interval_ms": 200,
-      "extended_interval_ms": 200,
+      "extended_interval_ms": 800,
       "extended": false
     }
   },
