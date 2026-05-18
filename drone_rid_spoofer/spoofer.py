@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from drone_rid_spoofer.helpers import (
-    generate_random_mac,
+    generate_ble_mac,
+    generate_wifi_mac,
     get_random_pilot_location,
     get_random_serial_number,
     parse_location,
@@ -52,11 +53,12 @@ class DroneSpoofer:
         serial = self.args.serial.encode() if self.args.serial else get_random_serial_number()
         lat, lng = random_location(*self.args.location, 10000)
         pilot_loc = get_random_pilot_location(lat, lng)
-        mac_addr = generate_random_mac()
+        mac_addr = generate_wifi_mac()
+        ble_addr = generate_ble_mac()
 
-        drone = DroneState(serial, pilot_loc, lat, lng, mac_addr)
+        drone = DroneState(serial, pilot_loc, lat, lng, mac_addr, ble_addr)
         self._seed_kinematics(drone)
-        logger.info(f"Drone {serial.decode()} created at [{lat}, {lng}] with MAC {mac_addr}")
+        logger.info(f"Drone {serial.decode()} created at [{lat}, {lng}] with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr}")
 
         self._run_manual_control_loop(drone)
 
@@ -120,12 +122,13 @@ class DroneSpoofer:
             serial = get_random_serial_number()
             lat, lng = random_location(base_lat, base_lng, 50000)
             pilot_loc = get_random_pilot_location(lat, lng)
-            mac_addr = generate_random_mac()
+            mac_addr = generate_wifi_mac()
+            ble_addr = generate_ble_mac()
 
-            drone = DroneState(serial, pilot_loc, lat, lng, mac_addr)
+            drone = DroneState(serial, pilot_loc, lat, lng, mac_addr, ble_addr)
             self._seed_kinematics(drone)
             drones.append(drone)
-            logger.info(f"Drone {serial.decode()} created with MAC {mac_addr}")
+            logger.info(f"Drone {serial.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr}")
 
         return drones
 
@@ -184,7 +187,8 @@ class DroneSpoofer:
 
             serial = entry.get("serial")
             serial_bytes = serial.encode() if serial else get_random_serial_number()
-            mac_addr = entry.get("mac") or generate_random_mac()
+            mac_addr = entry.get("mac") or generate_wifi_mac()
+            ble_addr = entry.get("ble_mac") or generate_ble_mac()
             lifespan_seconds = entry.get("lifespan_seconds", 0)
             end_time = None
             if lifespan_seconds and lifespan_seconds > 0:
@@ -199,6 +203,7 @@ class DroneSpoofer:
                 lat=lat,
                 lng=lng,
                 mac_address=mac_addr,
+                ble_address=ble_addr,
                 mode=mode,
                 end_time=end_time,
                 waypoints=waypoints,
@@ -207,7 +212,7 @@ class DroneSpoofer:
             )
             self._seed_kinematics(drone, overrides=self._extract_kinematic_overrides(entry))
             drones.append(drone)
-            logger.info(f"Drone {serial_bytes.decode()} created with MAC {mac_addr} mode={mode}")
+            logger.info(f"Drone {serial_bytes.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr} mode={mode}")
 
         return drones
 

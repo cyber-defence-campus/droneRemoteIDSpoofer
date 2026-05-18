@@ -12,7 +12,8 @@ class DroneState:
     pilot_location: Tuple[int, int]
     lat: int
     lng: int
-    mac_address: str
+    mac_address: str       # Wi-Fi unicast LAA
+    ble_address: str        # BLE Static Random
     direction: int = 0
     mode: str = "random"
     end_time: Optional[datetime] = None

@@ -158,6 +158,9 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `-v` | `--verbose` | - | - | Enable debug logging |
 | `-t` | `--transport` | `wifi\|ble\|both` | config or `wifi` | Transport backend |
 | | `--ble-adapter` | `str` | config or `hci0` | BLE HCI adapter name |
+| | `--wifi-channel`| `int` | config or `6` | Wi-Fi channel for injection |
+| | `--wifi-ess`    | - | - | Set ESS capability (make beacon look like an AP) |
+| | `--wifi-beacon-interval` | `float` | config or `0.1024` | Wi-Fi beacon transmission interval in seconds |
 
 CLI flags override values from scenario config files.
 

@@ -27,15 +27,32 @@ def parse_location(latitude: str, longitude: str) -> Tuple[int, int]:
     return int(lat * 10**7), int(lng * 10**7)
 
 
-def generate_random_mac() -> str:
-    """Generate a random MAC address.
+def generate_wifi_mac() -> str:
+    """Generate a random locally-administered unicast MAC for Wi-Fi injection.
 
-    Top 2 bits of the MSB are forced to 11 so the address qualifies as a BLE
-    Static Random Address (BT Core). Without this, controllers reject ~25% of
-    fully-random MACs and treat others as RPA/NRPA, breaking BLE advertising.
+    Bit semantics of byte[0]:
+      - bit 0 (multicast): forced to 0 → unicast; the 802.11 stack rejects
+        multicast source addresses at the driver level.
+      - bit 1 (locally-administered): forced to 1 → LAA; signals to receivers
+        that this is a spoofed/virtual address, not a burned-in OUI.
+    Result mask: 0bxxxxxx10
     """
     parts = [random.randint(0, 255) for _ in range(6)]
-    parts[0] |= 0xC0
+    parts[0] = (parts[0] & 0xFC) | 0x02  # clear multicast, set locally-administered
+    return ":".join(f"{b:02x}" for b in parts)
+
+
+def generate_ble_mac() -> str:
+    """Generate a random Static Random Address for BLE advertising.
+
+    The Bluetooth Core Specification (Vol 6, Part B, §1.3.2) requires the two
+    most significant bits of byte[0] to be 0b11 for a Static Random Address.
+    Without this, HCI controllers classify the address as Resolvable or
+    Non-Resolvable Private, and ~25 % of random MACs are outright rejected.
+    Result mask: 0b11xxxxxx
+    """
+    parts = [random.randint(0, 255) for _ in range(6)]
+    parts[0] |= 0xC0  # force top 2 bits to 11
     return ":".join(f"{b:02x}" for b in parts)
 
 

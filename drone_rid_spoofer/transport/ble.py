@@ -23,6 +23,7 @@ import time
 from typing import Dict, List, Optional
 
 from drone_rid_spoofer.state import DroneState
+from drone_rid_spoofer.messages import MsgType
 from drone_rid_spoofer.transport.base import TransportBackend
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,7 @@ ASTM_UUID = b'\xFA\xFF'  # 0xFFFA little-endian
 ASTM_APP_CODE = 0x0D
 AD_TYPE_SERVICE_DATA_16 = 0x16
 
-# Location message type byte starts with 0x10
-LOCATION_MSG_PREFIX = 0x10
-
-
+# Location message type is 1 (upper 4 bits)
 def _mac_to_bytes(mac: str) -> bytes:
     """Convert MAC address string to 6 bytes (reverse order for HCI)."""
     parts = mac.split(':')
@@ -246,8 +244,8 @@ class BleBackend(TransportBackend):
         Static messages (BasicID, Self-ID, System, OperatorID) rotate one per
         cycle so each is refreshed every N cycles, where N = number of statics.
         """
-        location_msgs = [m for m in messages if m and m[0] == LOCATION_MSG_PREFIX]
-        static_msgs = [m for m in messages if m and m[0] != LOCATION_MSG_PREFIX]
+        location_msgs = [m for m in messages if m and (m[0] >> 4) == MsgType.LOCATION]
+        static_msgs = [m for m in messages if m and (m[0] >> 4) != MsgType.LOCATION]
 
         sequence = location_msgs * 3
         if static_msgs:
@@ -275,7 +273,7 @@ class BleBackend(TransportBackend):
         self._set_advertising_enable(False)
 
         # Set random address to drone's MAC
-        self._set_random_address(drone.mac_address)
+        self._set_random_address(drone.ble_address)
         self._set_advertising_params()
 
         send_sequence = self._build_send_sequence(drone_key, messages)

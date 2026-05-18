@@ -21,6 +21,10 @@ Note that CLI flags override config values.
 - `ble` (object): BLE-specific settings (optional).
   - `adapter` (string): HCI adapter name. Default: `"hci0"`.
   - `advertising_interval_ms` (int): time per BLE advertisement in ms. Default: `200`.
+- `wifi` (object): Wi-Fi-specific settings (optional).
+  - `channel` (int): Wi-Fi channel for injection. Default: `6`.
+  - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`.
+  - `beacon_interval` (number): Wi-Fi beacon transmission interval in seconds. Default: `0.1024`.
 
 ## Drone fields
 Each entry in `drones` describes a single drone. Missing fields are generated
@@ -28,7 +32,10 @@ randomly (serial, MAC, and locations).
 
 - `mode` (string): `"random"`, `"static"`, or `"waypoints"`. Default: `"random"`.
 - `serial` (string): max 20 chars. Optional.
-- `mac` (string): MAC address. Optional.
+- `mac` (string): Wi-Fi source MAC address. Must be a **unicast, locally-administered** address
+  (byte[0] bits: `0bxxxxxx10`). Randomly generated if omitted. Optional.
+- `ble_mac` (string): BLE advertiser address. Must be a **Static Random** address per BT Core Spec §1.3.2
+  (byte[0] bits: `0b11xxxxxx`). Randomly generated if omitted. Optional.
 - `start_location` ([lat, lng]): initial drone location. Optional.
 - `pilot_location` ([lat, lng]): pilot position. Optional.
 - `lifespan_seconds` (int): stop transmitting after N seconds. Optional.

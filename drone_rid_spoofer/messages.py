@@ -1,8 +1,18 @@
 import struct
 from datetime import datetime, timedelta
+from enum import IntEnum
 from typing import Tuple, List
 
 from drone_rid_spoofer.state import DroneState
+
+class MsgType(IntEnum):
+    BASIC_ID = 0x0
+    LOCATION = 0x1
+    AUTH = 0x2
+    SELF_ID = 0x3
+    SYSTEM = 0x4
+    OPERATOR_ID = 0x5
+    PACK = 0xF
 
 SELF_ID_DESCRIPTION = b"Spoofing test"
 
@@ -31,10 +41,11 @@ def _encode_altitude(alt_m: float) -> int:
     return max(0, min(0xFFFF, int(round((alt_m + 1000.0) * 2))))
 
 
-def build_basic_id(serial: bytes) -> bytes:
+def build_basic_id(serial: bytes, protocol_version: int = 2) -> bytes:
     """Build Message Type 0 - Basic ID (25 bytes)."""
     serial_packed = struct.pack("<20s", serial)
-    return b'\x00\x12' + serial_packed + b'\x00\x00\x00'
+    header = bytes([(MsgType.BASIC_ID << 4) | protocol_version, 0x12])
+    return header + serial_packed + b'\x00\x00\x00'
 
 
 def build_location_vector(lat: int, lng: int, direction: int,
@@ -43,7 +54,8 @@ def build_location_vector(lat: int, lng: int, direction: int,
                           pressure_altitude: float = 0.0,
                           geodetic_altitude: float = 0.0,
                           height: float = 0.0,
-                          timestamp_offset: float = 0.0) -> bytes:
+                          timestamp_offset: float = 0.0,
+                          protocol_version: int = 2) -> bytes:
     """Build Message Type 1 - Location/Vector (25 bytes).
 
     Args:
@@ -56,7 +68,7 @@ def build_location_vector(lat: int, lng: int, direction: int,
     tenth_seconds = (now.minute * 600 + now.second * 10) % 6000
 
     return b''.join([
-        struct.pack("<B", 0x10),
+        struct.pack("<B", (MsgType.LOCATION << 4) | protocol_version),
         struct.pack("<B", ew_dir),
         struct.pack("<B", dir_val),
         struct.pack("<B", _encode_speed(speed)),
@@ -72,10 +84,10 @@ def build_location_vector(lat: int, lng: int, direction: int,
     ])
 
 
-def build_system(pilot_lat: int, pilot_lng: int) -> bytes:
+def build_system(pilot_lat: int, pilot_lng: int, protocol_version: int = 2) -> bytes:
     """Build Message Type 4 - System (25 bytes)."""
     return b''.join([
-        struct.pack("<B", 0x40),
+        struct.pack("<B", (MsgType.SYSTEM << 4) | protocol_version),
         struct.pack("<B", 0x05),
         struct.pack("<i", pilot_lat),
         struct.pack("<i", pilot_lng),
@@ -85,24 +97,25 @@ def build_system(pilot_lat: int, pilot_lng: int) -> bytes:
     ])
 
 
-def build_self_id(description: bytes = SELF_ID_DESCRIPTION) -> bytes:
+def build_self_id(description: bytes = SELF_ID_DESCRIPTION, protocol_version: int = 2) -> bytes:
     """Build Message Type 3 - Self ID (25 bytes).
 
     Description type 0x00 = text. Body is 23 ASCII bytes (null-padded).
     """
     body = description[:23].ljust(23, b'\x00')
-    return b'\x30\x00' + body
+    header = bytes([(MsgType.SELF_ID << 4) | protocol_version, 0x00])
+    return header + body
 
 
-def build_operator_id() -> bytes:
+def build_operator_id(protocol_version: int = 2) -> bytes:
     """Build Message Type 5 - Operator ID (25 bytes)."""
-    return b'\x50' + b'\x00' * 24
+    return bytes([(MsgType.OPERATOR_ID << 4) | protocol_version]) + b'\x00' * 24
 
 
-def build_all_messages(drone: DroneState) -> List[bytes]:
+def build_all_messages(drone: DroneState, protocol_version: int = 2) -> List[bytes]:
     """Build all ASTM message payloads for a drone."""
     return [
-        build_basic_id(drone.serial),
+        build_basic_id(drone.serial, protocol_version=protocol_version),
         build_location_vector(
             drone.lat, drone.lng, drone.direction,
             speed=drone.speed,
@@ -111,8 +124,9 @@ def build_all_messages(drone: DroneState) -> List[bytes]:
             geodetic_altitude=drone.geodetic_altitude,
             height=drone.height,
             timestamp_offset=drone.timestamp_offset,
+            protocol_version=protocol_version
         ),
-        build_self_id(),
-        build_system(drone.pilot_location[0], drone.pilot_location[1]),
-        build_operator_id(),
+        build_self_id(protocol_version=protocol_version),
+        build_system(drone.pilot_location[0], drone.pilot_location[1], protocol_version=protocol_version),
+        build_operator_id(protocol_version=protocol_version),
     ]

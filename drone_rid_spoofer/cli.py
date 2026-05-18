@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wifi-ess", action="store_true", default=None,
                         help="Set the ESS capability bit on Wi-Fi beacons "
                              "(default: off; spoofed drone is not advertised as an AP)")
+    parser.add_argument("--wifi-channel", type=int, default=None,
+                        help="Wi-Fi channel to broadcast on (default: 6)")
+    parser.add_argument("--wifi-beacon-interval", type=float, default=None,
+                        help="Wi-Fi beacon transmission interval in seconds. "
+                             "ASTM F3411-22 requires <0.2s (200 TUs) on most channels. "
+                             "Social channels (6, 149) have more lax requirements. (default: 0.1024)")
 
     args = parser.parse_args()
 
@@ -75,13 +81,14 @@ def load_config(path: str) -> dict:
 
 
 def create_backends(transport: str, interface: str, ble_adapter: str,
-                    ble_interval_ms: int, wifi_ess: bool = False) -> List[TransportBackend]:
+                    ble_interval_ms: int, wifi_ess: bool = False,
+                    wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024) -> List[TransportBackend]:
     """Create transport backend instances based on configuration."""
     backends: List[TransportBackend] = []
 
     if transport in ("wifi", "both"):
         from drone_rid_spoofer.transport.wifi import WifiBackend
-        backends.append(WifiBackend(interface, ess=wifi_ess))
+        backends.append(WifiBackend(interface, ess=wifi_ess, channel=wifi_channel, beacon_interval=wifi_beacon_interval))
 
     if transport in ("ble", "both"):
         from drone_rid_spoofer.transport.ble import BleBackend
@@ -130,6 +137,14 @@ def main() -> None:
         if args.wifi_ess is None:
             wifi_config = config_global.get("wifi", {})
             args.wifi_ess = bool(wifi_config.get("ess", False))
+            
+        if getattr(args, 'wifi_channel', None) is None:
+            wifi_config = config_global.get("wifi", {})
+            args.wifi_channel = int(wifi_config.get("channel", 6))
+            
+        if getattr(args, 'wifi_beacon_interval', None) is None:
+            wifi_config = config_global.get("wifi", {})
+            args.wifi_beacon_interval = float(wifi_config.get("beacon_interval", 0.1024))
 
         if args.random < 1:
             raise ValueError("Number of random drones must be at least 1")
@@ -140,7 +155,9 @@ def main() -> None:
         logging.info(f"Interval between packets(s): {args.interval}s")
 
         backends = create_backends(args.transport, args.interface, args.ble_adapter,
-                                   ble_interval_ms, wifi_ess=args.wifi_ess)
+                                   ble_interval_ms, wifi_ess=args.wifi_ess,
+                                   wifi_channel=args.wifi_channel,
+                                   wifi_beacon_interval=args.wifi_beacon_interval)
         spoofer = DroneSpoofer(args, backends)
 
         try:
