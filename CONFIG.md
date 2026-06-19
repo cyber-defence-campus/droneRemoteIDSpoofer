@@ -17,7 +17,7 @@ Note that CLI flags override config values.
 - `interval` (number): seconds between transmission batches. Default: `1.0`.
 - `location` ([lat, lng]): base coordinates in decimal degrees. Default: Zurich.
 - `random` (int): number of random drones if `drones` is empty. Default: `1`.
-- `transport` (string): `"wifi"`, `"ble"`, or `"both"`. Default: `"wifi"`.
+- `transport` (string): `"wifi"`, `"ble"`, `"nan"`, `"both"`, or `"all"`. Default: `"wifi"`.
 - `ble` (object): BLE-specific settings (optional).
   - `adapter` (string): HCI adapter name. Default: `"hci0"`.
   - `advertising_interval_ms` (int): interval for BLE 4 legacy advertisements. Default: `200`.
@@ -27,6 +27,8 @@ Note that CLI flags override config values.
   - `channel` (int): Wi-Fi channel for injection. Default: `6`.
   - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`.
   - `beacon_interval` (number): Wi-Fi beacon transmission interval in seconds. Default: `0.1024`.
+- `nan` (object): Wi-Fi NAN/Aware settings (optional).
+  - `port` (int): TCP port to connect to the Android NAN Bridge. Default: `8080`.
 
 ## Drone fields
 Each entry in `drones` describes a single drone. Missing fields are generated
@@ -41,7 +43,7 @@ randomly (serial, MAC, and locations).
 - `start_location` ([lat, lng]): initial drone location. Optional.
 - `pilot_location` ([lat, lng]): pilot position. Optional.
 - `lifespan_seconds` (int): stop transmitting after N seconds. Optional.
-- `transport` (string): per-drone transport override (`"wifi"`, `"ble"`, `"both"`). Optional.
+- `transport` (string): per-drone transport override (`"wifi"`, `"ble"`, `"nan"`, `"both"`, `"all"`). Optional.
 - `timestamp_offset_minutes` (number): shift the ASTM Location timestamp by this many minutes. Negative values produce timestamps in the past (e.g., `-5` = 5 minutes ago). Wraps within the hour. Default: `0`. Optional.
 - `speed` (number): horizontal speed in m/s. Default: random in `[0, 25]`. Optional.
 - `vertical_speed` (number): vertical speed in m/s, positive = climbing. Default: random in `[-5, 5]`. Optional.
@@ -85,6 +87,13 @@ In this mode, `advertising_interval_ms` sets the interval for the legacy adverti
 
 ### `both`
 Sends on Wi-Fi and BLE simultaneously.
+
+### `nan`
+Sends ASTM F3411-22 payloads via Wi-Fi NAN (Neighbor Awareness Networking / Wi-Fi Aware).
+Requires an Android phone running the `NaN_Bridge` app, connected via `adb forward tcp:8080 tcp:8080`.
+
+### `all`
+Sends on all available transports (Wi-Fi, BLE, and NAN).
 
 ## Examples
 

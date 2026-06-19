@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable verbose logging")
     parser.add_argument("-t", "--transport", type=str, default=None,
-                        choices=["wifi", "ble", "both"],
+                        choices=["wifi", "ble", "nan", "both", "all"],
                         help="Transport backend (default: wifi)")
     parser.add_argument("--ble-adapter", type=str, default=None,
                         help="BLE adapter name (default: hci0). If BLE transport is used")
@@ -68,6 +68,8 @@ def parse_args() -> argparse.Namespace:
                         help="Wi-Fi beacon transmission interval in seconds. "
                              "ASTM F3411-22 requires <0.2s (200 TUs) on most channels. "
                              "Social channels (6, 149) have more lax requirements. (default: 0.1024)")
+    parser.add_argument("--nan-port", type=int, default=None,
+                        help="TCP port for the NAN Android Bridge (default: 8080)")
 
     args = parser.parse_args()
 
@@ -90,15 +92,16 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                     ble_interval: int, ble_extended_interval: int = None,
                     ble_extended: bool = False,
                     wifi_ess: bool = False,
-                    wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024) -> List[TransportBackend]:
+                    wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024,
+                    nan_port: int = 8080) -> List[TransportBackend]:
     """Create transport backend instances based on configuration."""
     backends: List[TransportBackend] = []
 
-    if transport in ("wifi", "both"):
+    if transport in ("wifi", "both", "all"):
         from drone_rid_spoofer.transport.wifi import WifiBackend
         backends.append(WifiBackend(interface, ess=wifi_ess, channel=wifi_channel, beacon_interval=wifi_beacon_interval))
 
-    if transport in ("ble", "both"):
+    if transport in ("ble", "both", "all"):
         if ble_extended:
             from drone_rid_spoofer.transport.ble import BleExtendedBackend
             backends.append(BleExtendedBackend(
@@ -112,6 +115,10 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                 adapter=ble_adapter,
                 advertising_interval_ms=ble_interval,
             ))
+
+    if transport in ("nan", "all"):
+        from drone_rid_spoofer.transport.nan import NanBackend
+        backends.append(NanBackend(port=nan_port))
 
     return backends
 
@@ -172,6 +179,10 @@ def main() -> None:
             wifi_config = config_global.get("wifi", {})
             args.wifi_beacon_interval = float(wifi_config.get("beacon_interval", 0.1024))
 
+        if getattr(args, 'nan_port', None) is None:
+            nan_config = config_global.get("nan", {})
+            args.nan_port = int(nan_config.get("port", 8080))
+
         if args.random < 1:
             raise ValueError("Number of random drones must be at least 1")
 
@@ -186,7 +197,8 @@ def main() -> None:
                                    ble_extended=args.ble_extended,
                                    wifi_ess=args.wifi_ess,
                                    wifi_channel=args.wifi_channel,
-                                   wifi_beacon_interval=args.wifi_beacon_interval)
+                                   wifi_beacon_interval=args.wifi_beacon_interval,
+                                   nan_port=args.nan_port)
         spoofer = DroneSpoofer(args, backends)
 
         try:

@@ -8,7 +8,7 @@ It generates raw 802.11 beacon frames and BLE advertisements containing ASTM F34
 
 ### Features
 
-- **Multi-transport** — Wi-Fi beacon frames and BLE advertisements, individually or simultaneously
+- **Multi-transport** — Wi-Fi beacon frames, BLE advertisements, and Wi-Fi NAN (Aware), individually or simultaneously
 - **Multi-drone** — spoof several DroneIDs at once, each with unique serial, MAC, and flight behavior
 - **Flight modes** — random walk, static position, or predefined waypoint paths
 - **Scenario configs** — define multi-drone scenarios in JSON (10+ ready-to-use examples included)
@@ -31,6 +31,7 @@ It generates raw 802.11 beacon frames and BLE advertisements containing ASTM F34
 |-----------|----------|----------|
 | **Wi-Fi** | 802.11 adapter supporting monitor mode | Linux, root, `scapy` |
 | **BLE**   | Bluetooth adapter (HCI) | Linux, root |
+| **NAN**   | Android device with Wi-Fi Aware | Android App (`NaN_Bridge`), ADB |
 
 ### Install
 
@@ -61,6 +62,17 @@ sudo .venv/bin/python3 spoof_drones.py -t ble --ble-adapter hci0
 **Both at once:**
 ```bash
 sudo .venv/bin/python3 spoof_drones.py -i wlan1 -t both --ble-adapter hci0
+```
+
+**Wi-Fi NAN (using Android Bridge):**
+1. Install and run the `NaN_Bridge` app on an Android device supporting Wi-Fi Aware.
+2. Connect device via ADB and forward the TCP port:
+```bash
+adb forward tcp:8080 tcp:8080
+```
+3. Run the spoofer with `nan` transport:
+```bash
+python3 spoof_drones.py -t nan --nan-port 8080
 ```
 
 You should see the spoofed drone appear on any RID receiver within range.
@@ -156,7 +168,7 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `-l` | `--location` | `lat lng` | config or Zurich | Base coordinates (decimal degrees) |
 | `-c` | `--config` | `path` | - | Path to scenario JSON config |
 | `-v` | `--verbose` | - | - | Enable debug logging |
-| `-t` | `--transport` | `wifi\|ble\|both` | config or `wifi` | Transport backend |
+| `-t` | `--transport` | `wifi\|ble\|nan\|both\|all` | config or `wifi` | Transport backend |
 | | `--ble-adapter` | `str` | config or `hci0` | BLE HCI adapter name |
 | | `--ble-interval` | `int` | `200` | BLE 4 legacy advertising interval (ms) |
 | | `--ble-extended-interval` | `int` | same as legacy | BLE 5 extended advertising interval (ms) |
@@ -164,6 +176,7 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | | `--wifi-channel`| `int` | config or `6` | Wi-Fi channel for injection |
 | | `--wifi-ess`    | - | - | Set ESS capability (make beacon look like an AP) |
 | | `--wifi-beacon-interval` | `float` | config or `0.1024` | Wi-Fi beacon transmission interval in seconds |
+| | `--nan-port` | `int` | config or `8080` | TCP port for the NAN Android Bridge |
 
 CLI flags override values from scenario config files.
 
