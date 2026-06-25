@@ -65,7 +65,7 @@ sudo .venv/bin/python3 spoof_drones.py -i wlan1 -t both --ble-adapter hci0
 ```
 
 **Wi-Fi NAN (using Android Bridge):**
-1. Install and run the `NaN_Bridge` app on an Android device supporting Wi-Fi Aware.
+1. Install and run the `NaN_Bridge` app on an Android device supporting Wi-Fi Aware. Easiest way to do this is to use Android Studio to build and install the app on the device.
 2. Connect device via ADB and forward the TCP port:
 ```bash
 adb forward tcp:8080 tcp:8080

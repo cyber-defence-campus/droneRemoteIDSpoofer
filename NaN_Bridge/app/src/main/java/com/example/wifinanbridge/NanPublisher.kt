@@ -109,6 +109,14 @@ class NanPublisher(private val context: Context) {
         }
     }
 
+    fun stopDrone(droneId: String) {
+        val session = publishSessions.remove(droneId)
+        if (session != null) {
+            session.close()
+            Log.i("NanPublisher", "Stopped publishing for drone $droneId")
+        }
+    }
+
     fun destroy() {
         publishSessions.values.forEach { it.close() }
         publishSessions.clear()

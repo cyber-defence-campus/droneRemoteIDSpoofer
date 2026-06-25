@@ -93,6 +93,9 @@ class MainActivity : ComponentActivity() {
                     val payload = cmd.optString("payload")
                     nanPublisher.updatePayload(droneId, payload)
                 }
+                "STOP" -> {
+                    nanPublisher.stopDrone(droneId)
+                }
             }
         }
 

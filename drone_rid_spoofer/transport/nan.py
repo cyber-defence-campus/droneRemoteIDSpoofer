@@ -97,6 +97,16 @@ class NanBackend(TransportBackend):
         """Close the connection to the Android bridge."""
         if self.sock:
             with self.lock:
+                # Tell Android to stop publishing
+                for drone_id in list(self._configured_drones):
+                    try:
+                        cmd = {"type": "STOP", "drone_id": drone_id}
+                        data = json.dumps(cmd) + "\n"
+                        self.sock.sendall(data.encode('utf-8'))
+                    except Exception:
+                        pass
+                self._configured_drones.clear()
+                
                 try:
                     self.sock.close()
                 except Exception:
