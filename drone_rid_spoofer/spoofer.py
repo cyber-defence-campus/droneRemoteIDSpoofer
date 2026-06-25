@@ -42,7 +42,7 @@ class DroneSpoofer:
 
     def _send(self, drone: DroneState) -> None:
         """Build messages and send via all backends."""
-        messages = build_all_messages(drone)
+        messages = build_all_messages(drone, omit_self_id=getattr(self.args, 'no_self_id', False))
         for backend in self.backends:
             backend.send_messages(drone, messages)
 
