@@ -111,6 +111,7 @@ class _BleBase(TransportBackend):
         self._counters: Dict[bytes, int] = {}  # per-drone message counter
         self._static_index: Dict[bytes, int] = {}  # per-drone static-msg rotation pointer
         self._cycle_counts: Dict[bytes, int] = {}  # per-drone cycle counter for staggering
+        self._event_buffer: List[bytes] = []  # Buffer for unhandled HCI events
         self._open_socket()
         self._init_advertising()
 
@@ -190,8 +191,10 @@ class _BleBase(TransportBackend):
                 status = pkt[3]
                 evt_opcode = struct.unpack("<H", pkt[5:7])[0]
             else:
+                self._event_buffer.append(pkt)
                 continue  # unrelated event, keep draining
             if evt_opcode != opcode:
+                self._event_buffer.append(pkt)
                 continue
             if status != 0:
                 # 0x0C "Command Disallowed" on advertising enable/disable just
@@ -209,6 +212,19 @@ class _BleBase(TransportBackend):
     def _wait_for_adv_terminated(self, handle: int, timeout: float = 0.5) -> bool:
         """Wait for LE Advertising Set Terminated event for the given handle."""
         deadline = time.monotonic() + timeout
+
+        def is_terminated_event(p: bytes) -> bool:
+            if len(p) >= 6 and p[0] == HCI_EVENT_PKT and p[1] == 0x3E and p[3] == 0x12:
+                return p[5] == handle
+            return False
+
+        # 1. Check if the event is already in the buffer
+        for i, p in enumerate(self._event_buffer):
+            if is_terminated_event(p):
+                self._event_buffer.pop(i)
+                return True
+
+        # 2. Read from socket if not found
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -220,16 +236,11 @@ class _BleBase(TransportBackend):
                 pkt = self._sock.recv(258)
             except OSError:
                 return False
-            if len(pkt) < 3 or pkt[0] != HCI_EVENT_PKT:
-                continue
-            event_code = pkt[1]
-            if event_code == 0x3E and len(pkt) >= 6:  # LE Meta Event
-                subevent_code = pkt[3]
-                if subevent_code == 0x12:  # LE Advertising Set Terminated
-                    evt_handle = pkt[5]
-                    if evt_handle == handle:
-                        return True
-            # Keep draining if it's not the event we want
+            
+            if is_terminated_event(pkt):
+                return True
+            else:
+                self._event_buffer.append(pkt)
 
     def _warn_if_bad_random_address(self, mac: str, addr_bytes: bytes) -> None:
         """Log a warning if MAC doesn't satisfy BLE Static Random Address format."""
@@ -538,7 +549,6 @@ class BleExtendedBackend(_BleBase):
 
         # 1. Disable broadcasting before altering sets
         self._set_advertising_enable(False, [0x00, 0x01])
-        time.sleep(0.01)
 
         # 2. Re-apply Params and Address
         if not self.pure_bt5:
@@ -562,8 +572,7 @@ class BleExtendedBackend(_BleBase):
             # Tell controller to automatically disable after 1 event
             self._set_advertising_enable(True, [0x01], max_events=1)
             # Wait for it to finish, ensuring perfect rate and max throughput
-            # (timeout is interval * 1.5 to be safe)
-            self._wait_for_adv_terminated(0x01, timeout=(self.advertising_interval_ms * 1.5) / 1000.0)
+            self._wait_for_adv_terminated(0x01, timeout=0.1)
             counter = (counter + 1) & 0xFF
             # Don't need to explicitly disable Handle 1, controller did it automatically
         else:
