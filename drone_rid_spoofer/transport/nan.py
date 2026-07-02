@@ -27,7 +27,30 @@ class NanBackend(TransportBackend):
         self.lock = threading.Lock()
         self._configured_drones = set()
         self._counters = {}
+        self._stop_event = threading.Event()
+        self._listener_thread = None
         self._connect()
+
+    def _listen(self, sock):
+        """Listen for incoming messages from the Android bridge."""
+        sock.settimeout(1.0)
+        try:
+            # makefile makes reading lines easy
+            with sock.makefile('r', encoding='utf-8') as f:
+                while not self._stop_event.is_set():
+                    try:
+                        line = f.readline()
+                        if not line:
+                            break
+                        msg = json.loads(line)
+                        if msg.get("type") == "ERROR":
+                            logging.error(f"NAN Bridge Error for drone {msg.get('drone_id')}: {msg.get('reason')}")
+                    except socket.timeout:
+                        continue
+                    except json.JSONDecodeError:
+                        pass
+        except Exception:
+            pass
 
     def _connect(self):
         """Establish TCP connection to the Android App."""
@@ -36,6 +59,8 @@ class NanBackend(TransportBackend):
             self.sock.settimeout(5.0)
             self.sock.connect((self.host, self.port))
             logging.info(f"Connected to NAN bridge at {self.host}:{self.port}")
+            self._listener_thread = threading.Thread(target=self._listen, args=(self.sock,), daemon=True)
+            self._listener_thread.start()
         except Exception as e:
             logging.error(f"Failed to connect to NAN bridge at {self.host}:{self.port}: {e}")
             self.sock = None
@@ -95,16 +120,16 @@ class NanBackend(TransportBackend):
 
     def close(self) -> None:
         """Close the connection to the Android bridge."""
+        self._stop_event.set()
         if self.sock:
             with self.lock:
-                # Tell Android to stop publishing
-                for drone_id in list(self._configured_drones):
-                    try:
-                        cmd = {"type": "STOP", "drone_id": drone_id}
-                        data = json.dumps(cmd) + "\n"
-                        self.sock.sendall(data.encode('utf-8'))
-                    except Exception:
-                        pass
+                # Tell Android to stop all publishing
+                try:
+                    cmd = {"type": "STOP_ALL"}
+                    data = json.dumps(cmd) + "\n"
+                    self.sock.sendall(data.encode('utf-8'))
+                except Exception:
+                    pass
                 self._configured_drones.clear()
                 
                 try:
@@ -113,3 +138,19 @@ class NanBackend(TransportBackend):
                     pass
                 self.sock = None
             logging.info("Disconnected from NAN bridge.")
+        if self._listener_thread:
+            self._listener_thread.join(timeout=2.0)
+
+    def reset(self) -> None:
+        """Perform a full system reset of the Android NAN subsystem."""
+        if self.sock:
+            with self.lock:
+                try:
+                    cmd = {"type": "RESET"}
+                    data = json.dumps(cmd) + "\n"
+                    self.sock.sendall(data.encode('utf-8'))
+                except Exception as e:
+                    logging.error(f"Failed to send RESET command: {e}")
+                self._configured_drones.clear()
+            logging.info("Sent RESET command to NAN bridge.")
+
