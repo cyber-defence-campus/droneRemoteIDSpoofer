@@ -69,18 +69,32 @@ class DroneSpoofer:
 
         try:
             tty.setcbreak(stdin_fd)
+            interval = self.args.interval
+            next_tick = time.time()
 
             while True:
+                now = time.time()
+
+                # 1. Check for keyboard input frequently (20Hz)
                 if self._has_keyboard_input():
                     key = sys.stdin.read(1)
                     self._process_movement_key(drone, key)
-
-                if datetime.now() >= next_send:
+                
+                # 2. Transmit at the configured interval
+                if now >= next_tick:
                     self._send(drone)
                     logger.info(f"Sent packet for {drone.serial.decode()}")
-                    next_send = datetime.now() + timedelta(seconds=self.args.interval)
+                    
+                    # Schedule next tick
+                    next_tick += interval
+                    # If we fell behind, skip ahead to avoid burst catch-up
+                    if next_tick < time.time():
+                        next_tick = time.time() + interval
 
-                time.sleep(self.args.interval)
+                # 3. Sleep until next tick or next input check (whichever is sooner)
+                sleep_time = min(0.05, next_tick - time.time())
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
         except KeyboardInterrupt:
             logger.info("Manual mode stopped by user")
@@ -223,37 +237,56 @@ class DroneSpoofer:
         return {k: entry[k] for k in keys if k in entry}
 
     def _run_automatic_loop(self, drones: List[DroneState]) -> None:
-        next_send = datetime.now()
+        interval = float(self.args.interval)
+        next_tick = time.time()
         packet_batch_count = 0
 
         try:
             while True:
-                if datetime.now() >= next_send:
-                    now = datetime.now()
-                    for drone in drones:
-                        if drone.end_time and now >= drone.end_time:
-                            if drone.active:
-                                logger.info(f"Drone {drone.serial.decode()} expired; stopping transmission")
-                                drone.active = False
-                            continue
-                        if not drone.active:
-                            continue
-                        if drone.mode == "random":
-                            drone.update_location(10000)
-                            drone.drift_kinematics()
-                        elif drone.mode == "waypoints":
-                            self._update_waypoints(drone, now)
-                        self._send(drone)
-                        time.sleep(0.2)
+                active_count = 0
+                dt_now = datetime.now()
+                
+                # 1. Process all drones in this batch
+                for drone in drones:
+                    if drone.end_time and dt_now >= drone.end_time:
+                        if drone.active:
+                            logger.info(f"Drone {drone.serial.decode()} expired; stopping transmission")
+                            drone.active = False
+                        continue
+                    if not drone.active:
+                        continue
+                        
+                    active_count += 1
+                    if drone.mode == "random":
+                        drone.update_location(10000)
+                        drone.drift_kinematics()
+                    elif drone.mode == "waypoints":
+                        self._update_waypoints(drone, dt_now)
+                    
+                    self._send(drone)
 
-                    packet_batch_count += 1
-                    active_count = sum(1 for drone in drones if drone.active)
-                    logger.info(f"Sent batch {packet_batch_count} ({active_count} packets)")
-                    if active_count == 0:
-                        logger.info("All drones expired; stopping automatic mode")
-                        break
-                    next_send = datetime.now() + timedelta(seconds=self.args.interval)
-                time.sleep(self.args.interval)
+                packet_batch_count += 1
+                logger.info(f"Sent batch {packet_batch_count} ({active_count} active drones)")
+                
+                if active_count == 0 and any(d.end_time for d in drones):
+                    logger.info("All drones expired; stopping automatic mode")
+                    break
+                    
+                # 2. Advance deadline for next batch
+                next_tick += interval
+                
+                # 3. If the work took longer than the interval, slide the deadline forward
+                # to prevent a "catch-up" burst of packets.
+                now = time.time()
+                if next_tick < now:
+                    logger.warning(f"Batch processing took {now - (next_tick - interval):.2f}s, "
+                                   f"which is longer than interval {interval}s! Sliding deadline.")
+                    next_tick = now + interval
+
+                # 4. Compensating sleep until the next deadline
+                sleep_time = next_tick - time.time()
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
         except KeyboardInterrupt:
             logger.info(f"Automatic mode stopped. Sent {packet_batch_count} batches total")

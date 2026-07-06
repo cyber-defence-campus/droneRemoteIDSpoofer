@@ -53,6 +53,12 @@ def parse_args() -> argparse.Namespace:
                         help="Transport backend (default: wifi)")
     parser.add_argument("--ble-adapter", type=str, default=None,
                         help="BLE adapter name (default: hci0). If BLE transport is used")
+    parser.add_argument("--ble-interval", type=int, default=None,
+                        help="Interval for BLE 4 legacy advertisements in ms (default: 200)")
+    parser.add_argument("--ble-extended-interval", type=int, default=None,
+                        help="Interval override for BLE 5 extended advertisements in ms (default: same as --ble-interval)")
+    parser.add_argument("--ble-extended", action="store_true", default=None,
+                        help="Enable BLE 5 Extended Advertising (Coded PHY) alongside legacy rotation")
     parser.add_argument("--wifi-ess", action="store_true", default=None,
                         help="Set the ESS capability bit on Wi-Fi beacons "
                              "(default: off; spoofed drone is not advertised as an AP)")
@@ -81,7 +87,9 @@ def load_config(path: str) -> dict:
 
 
 def create_backends(transport: str, interface: str, ble_adapter: str,
-                    ble_interval_ms: int, wifi_ess: bool = False,
+                    ble_interval: int, ble_extended_interval: int = None,
+                    ble_extended: bool = False,
+                    wifi_ess: bool = False,
                     wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024) -> List[TransportBackend]:
     """Create transport backend instances based on configuration."""
     backends: List[TransportBackend] = []
@@ -91,8 +99,19 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
         backends.append(WifiBackend(interface, ess=wifi_ess, channel=wifi_channel, beacon_interval=wifi_beacon_interval))
 
     if transport in ("ble", "both"):
-        from drone_rid_spoofer.transport.ble import BleBackend
-        backends.append(BleBackend(adapter=ble_adapter, advertising_interval_ms=ble_interval_ms))
+        if ble_extended:
+            from drone_rid_spoofer.transport.ble import BleExtendedBackend
+            backends.append(BleExtendedBackend(
+                adapter=ble_adapter,
+                legacy_interval_ms=ble_interval,
+                extended_interval_ms=ble_extended_interval
+            ))
+        else:
+            from drone_rid_spoofer.transport.ble import BleLegacyBackend
+            backends.append(BleLegacyBackend(
+                adapter=ble_adapter,
+                advertising_interval_ms=ble_interval,
+            ))
 
     return backends
 
@@ -127,12 +146,19 @@ def main() -> None:
         if args.transport is None:
             args.transport = config_global.get("transport", "wifi")
 
+        ble_config = config_global.get("ble", {})
         if args.ble_adapter is None:
-            ble_config = config_global.get("ble", {})
             args.ble_adapter = ble_config.get("adapter", "hci0")
-            ble_interval_ms = ble_config.get("advertising_interval_ms", 200)
-        else:
-            ble_interval_ms = 200
+        
+        if args.ble_interval is None:
+            args.ble_interval = ble_config.get("advertising_interval_ms", 200)
+            
+        if args.ble_extended_interval is None:
+            args.ble_extended_interval = ble_config.get("extended_interval_ms", args.ble_interval)
+
+        if args.ble_extended is None:
+            ble_config = config_global.get("ble", {})
+            args.ble_extended = bool(ble_config.get("extended", False))
 
         if args.wifi_ess is None:
             wifi_config = config_global.get("wifi", {})
@@ -155,7 +181,10 @@ def main() -> None:
         logging.info(f"Interval between packets(s): {args.interval}s")
 
         backends = create_backends(args.transport, args.interface, args.ble_adapter,
-                                   ble_interval_ms, wifi_ess=args.wifi_ess,
+                                   args.ble_interval, 
+                                   ble_extended_interval=args.ble_extended_interval,
+                                   ble_extended=args.ble_extended,
+                                   wifi_ess=args.wifi_ess,
                                    wifi_channel=args.wifi_channel,
                                    wifi_beacon_interval=args.wifi_beacon_interval)
         spoofer = DroneSpoofer(args, backends)
