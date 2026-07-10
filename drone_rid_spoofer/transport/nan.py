@@ -19,17 +19,28 @@ class NanBackend(TransportBackend):
     and sends JSON commands to manage Wi-Fi Aware publish sessions.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8080, protocol_version: int = 2):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8080, protocol_version: int = 2, update_interval: float = 1.0):
         self.host = host
         self.port = port
         self.protocol_version = protocol_version
+        self.update_interval = update_interval
         self.sock = None
         self.lock = threading.Lock()
         self._configured_drones = set()
         self._counters = {}
         self._stop_event = threading.Event()
         self._listener_thread = None
+        self._drones = []
+        self._packet_builder = None
+        self._transmit_thread = None
         self._connect()
+
+    def start(self, drones: List[DroneState], packet_builder) -> None:
+        self._drones = drones
+        self._packet_builder = packet_builder
+        self._transmit_thread = threading.Thread(target=self._transmit_loop, daemon=True)
+        self._transmit_thread.start()
+        logging.info(f"NAN backend background thread started with {self.update_interval}s interval")
 
     def _listen(self, sock):
         """Listen for incoming messages from the Android bridge."""
@@ -82,41 +93,93 @@ class NanBackend(TransportBackend):
                 self.sock.close()
                 self.sock = None
 
-    def send_messages(self, drone: DroneState, messages: List[bytes]) -> None:
-        """Send ASTM messages for a drone via NAN."""
-        # Initialize the drone on the Android bridge if not already done
-        if drone.mac_address not in self._configured_drones:
+    def send_raw(self, drone_key: str, payload: bytes) -> None:
+        """Send a raw byte payload via NAN."""
+        if drone_key not in self._configured_drones:
             config_cmd = {
                 "type": "CONFIG",
-                "drone_id": drone.mac_address
+                "drone_id": drone_key
             }
             self._send_command(config_cmd)
-            self._configured_drones.add(drone.mac_address)
+            self._configured_drones.add(drone_key)
 
-        # Build ASTM F3411-22 compliant Wi-Fi Aware SSI payload
-        # Consists of the Message Counter, the Message Pack header and the messages
-        drone_key = drone.mac_address
-        counter = self._counters.get(drone_key, 0)
-        
-        msg_count = len(messages) & 0xFF
-        pack_header = bytes([counter, (MsgType.PACK << 4) | self.protocol_version, 0x19, msg_count])
-        
-        self._counters[drone_key] = (counter + 1) & 0xFF
-
-        payload = pack_header + b''.join(messages)
         if len(payload) > 255:
-            # Android SSI limit is 255 bytes.
-            logging.warning(f"NAN Payload too large ({len(payload)} bytes). Truncating to 255.")
+            logging.warning(f"NAN Raw Payload too large ({len(payload)} bytes). Truncating to 255.")
             payload = payload[:255]
 
         payload_b64 = base64.b64encode(payload).decode('ascii')
-
         payload_cmd = {
             "type": "PAYLOAD",
-            "drone_id": drone.mac_address,
+            "drone_id": drone_key,
             "payload": payload_b64
         }
         self._send_command(payload_cmd)
+
+    def _transmit_loop(self) -> None:
+        import time
+        # Wait until drones are populated
+        while not self._stop_event.is_set() and not self._drones:
+            time.sleep(0.01)
+            
+        next_tick = time.time()
+        while not self._stop_event.is_set():
+            for drone in self._drones:
+                if not getattr(drone, 'active', True):
+                    continue
+                
+                # Initialize the drone on the Android bridge if not already done
+                if drone.mac_address not in self._configured_drones:
+                    config_cmd = {
+                        "type": "CONFIG",
+                        "drone_id": drone.mac_address
+                    }
+                    self._send_command(config_cmd)
+                    self._configured_drones.add(drone.mac_address)
+
+                messages = self._packet_builder(drone)
+                drone_key = drone.mac_address
+                
+                if hasattr(drone, 'counter_override') and drone.counter_override is not None:
+                    counter = drone.counter_override
+                else:
+                    counter = self._counters.get(drone_key, 0)
+                    self._counters[drone_key] = (counter + 1) & 0xFF
+                
+                msg_count = len(messages) & 0xFF
+                pack_header = bytes([counter, (MsgType.PACK << 4) | self.protocol_version, 0x19, msg_count])
+
+                payload = pack_header + b''.join(messages)
+                if len(payload) > 255:
+                    logging.warning(f"NAN Payload too large ({len(payload)} bytes). Truncating to 255.")
+                    payload = payload[:255]
+
+                payload_b64 = base64.b64encode(payload).decode('ascii')
+                payload_cmd = {
+                    "type": "PAYLOAD",
+                    "drone_id": drone.mac_address,
+                    "payload": payload_b64
+                }
+                self._send_command(payload_cmd)
+                
+            next_tick += self.update_interval
+            now = time.time()
+            if next_tick < now:
+                next_tick = now
+                
+            sleep_time = next_tick - time.time()
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    def remove_drone(self, drone: DroneState) -> None:
+        """Stop publishing and remove state for an expired drone."""
+        if drone.mac_address in self._configured_drones:
+            stop_cmd = {
+                "type": "STOP",
+                "drone_id": drone.mac_address
+            }
+            self._send_command(stop_cmd)
+            self._configured_drones.discard(drone.mac_address)
+        self._counters.pop(drone.mac_address, None)
 
     def close(self) -> None:
         """Close the connection to the Android bridge."""
@@ -140,6 +203,8 @@ class NanBackend(TransportBackend):
             logging.info("Disconnected from NAN bridge.")
         if self._listener_thread:
             self._listener_thread.join(timeout=2.0)
+        if self._transmit_thread:
+            self._transmit_thread.join(timeout=2.0)
 
     def reset(self) -> None:
         """Perform a full system reset of the Android NAN subsystem."""

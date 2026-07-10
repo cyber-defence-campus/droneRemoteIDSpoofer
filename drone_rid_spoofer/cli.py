@@ -123,7 +123,7 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
 
     if transport in ("nan", "all"):
         from drone_rid_spoofer.transport.nan import NanBackend
-        backends.append(NanBackend(port=nan_port))
+        backends.append(NanBackend(port=nan_port, update_interval=args.interval))
 
     return backends
 

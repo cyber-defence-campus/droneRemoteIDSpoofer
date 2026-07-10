@@ -16,6 +16,7 @@ class DroneState:
     ble_address: str        # BLE Static Random
     direction: int = 0
     mode: str = "random"
+    lifespan_seconds: float = 0.0
     end_time: Optional[datetime] = None
     active: bool = True
     waypoints: Optional[List[Tuple[int, int, int]]] = None

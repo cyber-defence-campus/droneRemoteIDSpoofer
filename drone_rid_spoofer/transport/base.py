@@ -8,14 +8,18 @@ class TransportBackend(ABC):
     """Abstract base class for RID transport backends."""
 
     @abstractmethod
-    def send_messages(self, drone: DroneState, messages: List[bytes]) -> None:
-        """Send ASTM RID messages for a drone.
+    def start(self, drones: List[DroneState], packet_builder) -> None:
+        """Start the backend transmission thread.
 
         Args:
-            drone: The drone state (provides MAC, serial, etc.)
-            messages: List of 25-byte ASTM message payloads.
+            drones: Shared list of drone states to transmit.
+            packet_builder: A callable `f(drone)` that generates ASTM messages on the fly.
         """
 
     @abstractmethod
     def close(self) -> None:
         """Release transport resources."""
+
+    def remove_drone(self, drone: DroneState) -> None:
+        """Remove and cleanup resources for an expired drone."""
+        pass
