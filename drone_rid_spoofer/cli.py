@@ -57,10 +57,10 @@ def parse_args() -> argparse.Namespace:
                         help="Interval for BLE 4 legacy advertisements in ms (default: 200)")
     parser.add_argument("--ble-extended-interval", type=int, default=None,
                         help="Interval override for BLE 5 extended advertisements in ms (default: same as --ble-interval)")
-    parser.add_argument("--ble-extended", action="store_true", default=None,
-                        help="Enable BLE 5 Extended Advertising (Coded PHY) alongside legacy rotation")
-    parser.add_argument("--pure-bt5", action="store_true", default=None,
-                        help="Disable Legacy advertising when using Extended mode (violates ASTM backwards compatibility but maximizes BT5 concurrency)")
+    parser.add_argument("--ble-legacy", action="store_true", default=None,
+                        help="Use older BT4 Legacy Advertising only (for older USB adapters that do not support BLE 5 Extended)")
+    parser.add_argument("--ble-dual", action="store_true", default=None,
+                        help="Enable dual broadcast of both BT4 Legacy and BT5 Extended payloads simultaneously (reduces concurrency)")
     parser.add_argument("--wifi-ess", action="store_true", default=None,
                         help="Set the ESS capability bit on Wi-Fi beacons "
                              "(default: off; spoofed drone is not advertised as an AP)")
@@ -94,7 +94,7 @@ def load_config(path: str) -> dict:
 
 def create_backends(transport: str, interface: str, ble_adapter: str,
                     ble_interval: int, ble_extended_interval: int = None,
-                    ble_extended: bool = False, pure_bt5: bool = False,
+                    ble_legacy: bool = False, ble_dual: bool = False,
                     wifi_ess: bool = False,
                     wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024,
                     nan_port: int = 8080) -> List[TransportBackend]:
@@ -106,19 +106,19 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
         backends.append(WifiBackend(interface, ess=wifi_ess, channel=wifi_channel, beacon_interval=wifi_beacon_interval))
 
     if transport in ("ble", "both", "all"):
-        if ble_extended:
+        if ble_legacy:
+            from drone_rid_spoofer.transport.ble import BleLegacyBackend
+            backends.append(BleLegacyBackend(
+                adapter=ble_adapter,
+                advertising_interval_ms=ble_interval,
+            ))
+        else:
             from drone_rid_spoofer.transport.ble import BleExtendedBackend
             backends.append(BleExtendedBackend(
                 adapter=ble_adapter,
                 legacy_interval_ms=ble_interval,
                 extended_interval_ms=ble_extended_interval,
-                pure_bt5=pure_bt5
-            ))
-        else:
-            from drone_rid_spoofer.transport.ble import BleLegacyBackend
-            backends.append(BleLegacyBackend(
-                adapter=ble_adapter,
-                advertising_interval_ms=ble_interval,
+                pure_bt5=not ble_dual
             ))
 
     if transport in ("nan", "all"):
@@ -168,9 +168,13 @@ def main() -> None:
         if args.ble_extended_interval is None:
             args.ble_extended_interval = ble_config.get("extended_interval_ms", args.ble_interval)
 
-        if args.ble_extended is None:
+        if args.ble_legacy is None:
             ble_config = config_global.get("ble", {})
-            args.ble_extended = bool(ble_config.get("extended", False))
+            args.ble_legacy = bool(ble_config.get("legacy", False))
+
+        if args.ble_dual is None:
+            ble_config = config_global.get("ble", {})
+            args.ble_dual = bool(ble_config.get("dual", False))
 
         if args.wifi_ess is None:
             wifi_config = config_global.get("wifi", {})
@@ -199,8 +203,8 @@ def main() -> None:
         backends = create_backends(args.transport, args.interface, args.ble_adapter,
                                    args.ble_interval, 
                                    ble_extended_interval=args.ble_extended_interval,
-                                   ble_extended=args.ble_extended,
-                                   pure_bt5=args.pure_bt5,
+                                   ble_legacy=args.ble_legacy,
+                                   ble_dual=args.ble_dual,
                                    wifi_ess=args.wifi_ess,
                                    wifi_channel=args.wifi_channel,
                                    wifi_beacon_interval=args.wifi_beacon_interval,
