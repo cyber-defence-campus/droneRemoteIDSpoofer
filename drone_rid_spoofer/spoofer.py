@@ -281,8 +281,8 @@ class DroneSpoofer:
                 packet_batch_count += 1
                 logger.info(f"Sent batch {packet_batch_count} ({active_count} active drones)")
                 
-                if active_count == 0 and any(d.end_time for d in drones):
-                    logger.info("All drones expired; stopping automatic mode")
+                if active_count == 0:
+                    logger.info("No active drones remaining; stopping automatic mode")
                     break
                     
                 # 2. Advance deadline for next batch
@@ -339,4 +339,6 @@ class DroneSpoofer:
             drone.lng = lng
             drone.next_waypoint_time = now + timedelta(seconds=hold)
         else:
-            drone.next_waypoint_time = now + timedelta(seconds=3600)
+            if drone.active:
+                logger.info(f"Drone {drone.serial.decode()} reached its final waypoint. Stopping transmission.")
+                drone.active = False
