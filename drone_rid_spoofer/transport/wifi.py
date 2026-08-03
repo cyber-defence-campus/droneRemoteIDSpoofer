@@ -26,7 +26,8 @@ class WifiBackend(TransportBackend):
     SUPPORTED_RATES = b'\x82\x84\x8b\x96'
     EXTENDED_SUPPORTED_RATES = b'\x0c\x12\x18\x24\x30\x48\x60\x6c'
 
-    def __init__(self, interface: str, ess: bool = False, protocol_version: int = 2, channel: int = 6, beacon_interval: float = 0.1024, rate_mbps: float = 1.0):
+    def __init__(self, interface: str, ess: bool = False, protocol_version: int = 2, channel: int = 6, beacon_interval: float = 0.1024, rate_mbps: float = 1.0, fuzz_config: dict = None):
+        super().__init__(fuzz_config)
         self.interface = interface
         self.ess = ess
         self.protocol_version = protocol_version
@@ -104,9 +105,12 @@ class WifiBackend(TransportBackend):
                 msg_count_val = self._msg_counters.get(serial, 0)
                 self._msg_counters[serial] = (msg_count_val + 1) & 0xFF
                 
-                # Build vendor specific IE
-                msg_count_bytes = bytes([len(messages) & 0xFF])
-                header = bytes([self.APP_CODE, msg_count_val]) + self.pack_header_prefix + msg_count_bytes
+                # Build vendor specific IE (with optional fuzzing header overrides)
+                pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
+                pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
+                pack_msg_count = self.fuzz_config.get("pack_msg_count", len(messages) & 0xFF)
+                
+                header = bytes([self.APP_CODE, msg_count_val, pack_type_ver & 0xFF, pack_msg_size & 0xFF, pack_msg_count & 0xFF])
                 vendor_data = header + b''.join(messages)
 
                 serial_str = serial.decode('ascii', errors='replace')

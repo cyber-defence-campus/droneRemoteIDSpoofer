@@ -97,7 +97,7 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                     ble_legacy: bool = False, ble_dual: bool = False,
                     wifi_ess: bool = False,
                     wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024,
-                    nan_port: int = 8080) -> List[TransportBackend]:
+                    nan_port: int = 8080, update_interval: float = 1.0) -> List[TransportBackend]:
     """Create transport backend instances based on configuration."""
     backends: List[TransportBackend] = []
 
@@ -123,7 +123,7 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
 
     if transport in ("nan", "all"):
         from drone_rid_spoofer.transport.nan import NanBackend
-        backends.append(NanBackend(port=nan_port, update_interval=args.interval))
+        backends.append(NanBackend(port=nan_port, update_interval=update_interval))
 
     return backends
 
@@ -208,7 +208,8 @@ def main() -> None:
                                    wifi_ess=args.wifi_ess,
                                    wifi_channel=args.wifi_channel,
                                    wifi_beacon_interval=args.wifi_beacon_interval,
-                                   nan_port=args.nan_port)
+                                   nan_port=args.nan_port,
+                                   update_interval=args.interval)
         spoofer = DroneSpoofer(args, backends)
 
         try:

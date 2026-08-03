@@ -7,6 +7,9 @@ from drone_rid_spoofer.state import DroneState
 class TransportBackend(ABC):
     """Abstract base class for RID transport backends."""
 
+    def __init__(self, fuzz_config: dict = None):
+        self.fuzz_config = fuzz_config or {}
+
     @abstractmethod
     def start(self, drones: List[DroneState], packet_builder) -> None:
         """Start the backend transmission thread.

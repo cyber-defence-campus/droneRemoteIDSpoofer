@@ -19,7 +19,8 @@ class NanBackend(TransportBackend):
     and sends JSON commands to manage Wi-Fi Aware publish sessions.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8080, protocol_version: int = 2, update_interval: float = 1.0):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8080, protocol_version: int = 2, update_interval: float = 1.0, fuzz_config: dict = None):
+        super().__init__(fuzz_config)
         self.host = host
         self.port = port
         self.protocol_version = protocol_version
@@ -145,11 +146,13 @@ class NanBackend(TransportBackend):
                     counter = self._counters.get(drone_key, 0)
                     self._counters[drone_key] = (counter + 1) & 0xFF
                 
-                msg_count = len(messages) & 0xFF
-                pack_header = bytes([counter, (MsgType.PACK << 4) | self.protocol_version, 0x19, msg_count])
+                pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
+                pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
+                msg_count = self.fuzz_config.get("pack_msg_count", len(messages) & 0xFF)
+                pack_header = bytes([counter, pack_type_ver & 0xFF, pack_msg_size & 0xFF, msg_count & 0xFF])
 
                 payload = pack_header + b''.join(messages)
-                if len(payload) > 255:
+                if len(payload) > 255 and not self.fuzz_config.get("disable_pack_limit", False):
                     logging.warning(f"NAN Payload too large ({len(payload)} bytes). Truncating to 255.")
                     payload = payload[:255]
 

@@ -28,3 +28,21 @@ dist/
 # Local environment files
 .env
 .env.*
+
+# IDE and tool configs
+.idea/
+*.iml
+*.swp
+*.~*
+
+# Experimental & local folders
+scratch/
+NaN/
+test.txt
+*.tzt
+
+# Evaluation captures, data, and binaries
+*.pcap
+evaluation/*_results.json
+evaluation/*.png
+evaluation/cts_inject
