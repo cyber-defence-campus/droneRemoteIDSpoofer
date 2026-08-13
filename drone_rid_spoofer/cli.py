@@ -74,6 +74,12 @@ def parse_args() -> argparse.Namespace:
                              "Social channels (6, 149) have more lax requirements. (default: 0.1024)")
     parser.add_argument("--nan-port", type=int, default=None,
                         help="TCP port for the NAN Android Bridge (default: 8080)")
+    parser.add_argument("--nan-mode", type=str, default=None, choices=["bridge", "manual"],
+                        help="NAN transport backend mode: 'bridge' (Android TCP bridge) or 'manual' (Linux raw packet injection) (default: bridge)")
+    parser.add_argument("--nan-cluster-id", type=str, default=None,
+                        help="NAN cluster BSSID MAC string for manual injection mode (default: 50:6f:9a:01:00:00)")
+    parser.add_argument("--nan-instance-id", type=lambda x: int(x, 0), default=None,
+                        help="Transmitted Service Instance ID byte for manual injection mode (default: 0x10)")
 
     args = parser.parse_args()
 
@@ -97,7 +103,10 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                     ble_legacy: bool = False, ble_dual: bool = False,
                     wifi_ess: bool = False,
                     wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024,
-                    nan_port: int = 8080, update_interval: float = 1.0) -> List[TransportBackend]:
+                    nan_port: int = 8080, nan_mode: str = "bridge",
+                    nan_cluster_id: str = "50:6f:9a:01:00:00",
+                    nan_instance_id: int = 0x10,
+                    update_interval: float = 1.0) -> List[TransportBackend]:
     """Create transport backend instances based on configuration."""
     backends: List[TransportBackend] = []
 
@@ -122,8 +131,18 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
             ))
 
     if transport in ("nan", "all"):
-        from drone_rid_spoofer.transport.nan import NanBackend
-        backends.append(NanBackend(port=nan_port, update_interval=update_interval))
+        if nan_mode == "manual":
+            from drone_rid_spoofer.transport.nan import NanManualBackend
+            backends.append(NanManualBackend(
+                interface=interface,
+                channel=wifi_channel,
+                cluster_id=nan_cluster_id,
+                instance_id=nan_instance_id,
+                update_interval=update_interval
+            ))
+        else:
+            from drone_rid_spoofer.transport.nan import NanBridgeBackend
+            backends.append(NanBridgeBackend(port=nan_port, update_interval=update_interval))
 
     return backends
 
@@ -188,9 +207,16 @@ def main() -> None:
             wifi_config = config_global.get("wifi", {})
             args.wifi_beacon_interval = float(wifi_config.get("beacon_interval", 0.1024))
 
+        nan_config = config_global.get("nan", {})
         if getattr(args, 'nan_port', None) is None:
-            nan_config = config_global.get("nan", {})
             args.nan_port = int(nan_config.get("port", 8080))
+        if getattr(args, 'nan_mode', None) is None:
+            args.nan_mode = str(nan_config.get("mode", "bridge"))
+        if getattr(args, 'nan_cluster_id', None) is None:
+            args.nan_cluster_id = str(nan_config.get("cluster_id", "50:6f:9a:01:00:00"))
+        if getattr(args, 'nan_instance_id', None) is None:
+            val = nan_config.get("instance_id", 0x10)
+            args.nan_instance_id = int(val, 0) if isinstance(val, str) else int(val)
 
         if args.random < 1:
             raise ValueError("Number of random drones must be at least 1")
@@ -209,6 +235,9 @@ def main() -> None:
                                    wifi_channel=args.wifi_channel,
                                    wifi_beacon_interval=args.wifi_beacon_interval,
                                    nan_port=args.nan_port,
+                                   nan_mode=args.nan_mode,
+                                   nan_cluster_id=args.nan_cluster_id,
+                                   nan_instance_id=args.nan_instance_id,
                                    update_interval=args.interval)
         spoofer = DroneSpoofer(args, backends)
 

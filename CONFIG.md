@@ -23,12 +23,17 @@ Note that CLI flags override config values.
   - `advertising_interval_ms` (int): interval for BLE 4 legacy advertisements. Default: `200`.
   - `extended_interval_ms` (int): pulse rate for BLE 5 extended pack. Default: same as `advertising_interval_ms`.
   - `extended` (bool): enable BLE 5 Extended Advertising (Coded PHY). Default: `false`.
+  - `legacy` (bool): force BLE 4 Legacy Advertising mode. Default: `false`.
+  - `dual` (bool): enable dual BLE 4 Legacy + BLE 5 Extended Advertising. Default: `false`.
 - `wifi` (object): Wi-Fi-specific settings (optional).
   - `channel` (int): Wi-Fi channel for injection. Default: `6`.
   - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`.
   - `beacon_interval` (number): Wi-Fi beacon transmission interval in seconds. Default: `0.1024`.
 - `nan` (object): Wi-Fi NAN/Aware settings (optional).
-  - `port` (int): TCP port to connect to the Android NAN Bridge. Default: `8080`.
+  - `mode` (string): `"bridge"` (Android TCP bridge) or `"manual"` (direct Linux raw packet injection). Default: `"bridge"`.
+  - `port` (int): TCP port to connect to the Android NAN Bridge when `mode` is `"bridge"`. Default: `8080`.
+  - `cluster_id` (string): NAN Cluster BSSID MAC address for `manual` injection mode. Default: `"50:6f:9a:01:00:00"`.
+  - `instance_id` (int or hex string): Transmitted Service Instance ID byte for `manual` injection mode (e.g. `16` or `"0x10"`). Default: `16` (`0x10`).
 
 ## Drone fields
 Each entry in `drones` describes a single drone. Missing fields are generated
@@ -89,8 +94,9 @@ In this mode, `advertising_interval_ms` sets the interval for the legacy adverti
 Sends on Wi-Fi and BLE simultaneously.
 
 ### `nan`
-Sends ASTM F3411-22 payloads via Wi-Fi NAN (Neighbor Awareness Networking / Wi-Fi Aware).
-Requires an Android phone running the `NaN_Bridge` app, connected via `adb forward tcp:8080 tcp:8080`.
+Sends ASTM F3411-22 payloads via Wi-Fi NAN (Neighbor Awareness Networking / Wi-Fi Aware). Supports two modes:
+- **`bridge` mode** (default): Connects to an Android phone running the `NaN_Bridge` app via TCP, configured by `nan.port` (default `8080`, via `adb forward tcp:8080 tcp:8080`).
+- **`manual` mode**: Directly transmits IEEE 802.11 Wi-Fi Aware NAN Action Frames & Discovery Beacons via Linux raw `AF_PACKET` packet injection over a monitor mode Wi-Fi interface, requiring no Android hardware. Configurable via `nan.cluster_id` and `nan.instance_id`.
 
 ### `all`
 Sends on all available transports (Wi-Fi, BLE, and NAN).

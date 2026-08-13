@@ -105,40 +105,46 @@ class WifiBackend(TransportBackend):
                 msg_count_val = self._msg_counters.get(serial, 0)
                 self._msg_counters[serial] = (msg_count_val + 1) & 0xFF
                 
-                # Build vendor specific IE (with optional fuzzing header overrides)
-                pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
-                pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
-                pack_msg_count = self.fuzz_config.get("pack_msg_count", len(messages) & 0xFF)
-                
-                header = bytes([self.APP_CODE, msg_count_val, pack_type_ver & 0xFF, pack_msg_size & 0xFF, pack_msg_count & 0xFF])
-                vendor_data = header + b''.join(messages)
+                if self.fuzz_config and self.fuzz_config.get("raw_injection"):
+                    rate_500kbps = int(self.rate_mbps * 2)
+                    radiotap = dot11.RadioTap(present='Rate', Rate=rate_500kbps)
+                    frame = bytes(radiotap) + b''.join(messages)
+                    packets.append(frame)
+                else:
+                    pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
+                    pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
+                    pack_msg_count = self.fuzz_config.get("pack_msg_count", len(messages) & 0xFF)
+                    
+                    header = bytes([self.APP_CODE, msg_count_val, pack_type_ver & 0xFF, pack_msg_size & 0xFF, pack_msg_count & 0xFF])
+                    vendor_data = header + b''.join(messages)
+    
+                    serial_str = serial.decode('ascii', errors='replace')
+                    ssid = (self.SSID_PREFIX + serial_str)[: self.SSID_MAX_LEN]
+                    ie_ssid = dot11.Dot11Elt(ID='SSID', info=ssid)
+                    ie_rates = dot11.Dot11Elt(ID='Rates', info=self.SUPPORTED_RATES)
+                    ie_dsset = dot11.Dot11Elt(ID='DSset', info=bytes([self.channel]))
+                    ie_tim = dot11.Dot11Elt(ID='TIM', info=b'\x00\x01\x00\x00')
+                    ie_erp = dot11.Dot11Elt(ID='ERPinfo', info=b'\x00')
+                    ie_esr = dot11.Dot11Elt(ID='ESRates', info=self.EXTENDED_SUPPORTED_RATES)
+                    ie_vendor = dot11.Dot11Elt(ID=221, info=self.OUI + vendor_data)
+    
+                    rate_500kbps = int(self.rate_mbps * 2)
+                    radiotap = dot11.RadioTap(present='Rate', Rate=rate_500kbps)
+                    ies = ie_ssid / ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr / ie_vendor
+                    
+                    # Dynamically instantiate the header to avoid thread contention on shared Scapy objects
+                    dot11_base = dot11.Dot11(
+                        type=0, subtype=8,
+                        addr1=self.DEST_ADDR,
+                        addr2=mac_addr,
+                        addr3=mac_addr,
+                        SC=(seq_num << 4)
+                    )
+                    beacon_base = dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf)
+                    
+                    frame = radiotap / dot11_base / beacon_base / ies
+                    packets.append(bytes(frame))
 
-                serial_str = serial.decode('ascii', errors='replace')
-                ssid = (self.SSID_PREFIX + serial_str)[: self.SSID_MAX_LEN]
-                ie_ssid = dot11.Dot11Elt(ID='SSID', info=ssid)
-                ie_rates = dot11.Dot11Elt(ID='Rates', info=self.SUPPORTED_RATES)
-                ie_dsset = dot11.Dot11Elt(ID='DSset', info=bytes([self.channel]))
-                ie_tim = dot11.Dot11Elt(ID='TIM', info=b'\x00\x01\x00\x00')
-                ie_erp = dot11.Dot11Elt(ID='ERPinfo', info=b'\x00')
-                ie_esr = dot11.Dot11Elt(ID='ESRates', info=self.EXTENDED_SUPPORTED_RATES)
-                ie_vendor = dot11.Dot11Elt(ID=221, info=self.OUI + vendor_data)
-
-                rate_500kbps = int(self.rate_mbps * 2)
-                radiotap = dot11.RadioTap(present='Rate', Rate=rate_500kbps)
-                ies = ie_ssid / ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr / ie_vendor
-                
-                # Dynamically instantiate the header to avoid thread contention on shared Scapy objects
-                dot11_base = dot11.Dot11(
-                    type=0, subtype=8,
-                    addr1=self.DEST_ADDR,
-                    addr2=mac_addr,
-                    addr3=mac_addr,
-                    SC=(seq_num << 4)
-                )
-                beacon_base = dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf)
-                
-                frame = radiotap / dot11_base / beacon_base / ies
-                packets.append(bytes(frame))
                 
             t_build_end = time.time()
             if hasattr(self, 'build_times'):
