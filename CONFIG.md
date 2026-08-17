@@ -20,11 +20,9 @@ Note that CLI flags override config values.
 - `transport` (string): `"wifi"`, `"ble"`, `"nan"`, `"both"`, or `"all"`. Default: `"wifi"`.
 - `ble` (object): BLE-specific settings (optional).
   - `adapter` (string): HCI adapter name. Default: `"hci0"`.
-  - `advertising_interval_ms` (int): interval for BLE 4 legacy advertisements. Default: `200`.
-  - `extended_interval_ms` (int): pulse rate for BLE 5 extended pack. Default: same as `advertising_interval_ms`.
-  - `extended` (bool): enable BLE 5 Extended Advertising (Coded PHY). Default: `false`.
-  - `legacy` (bool): force BLE 4 Legacy Advertising mode. Default: `false`.
-  - `dual` (bool): enable dual BLE 4 Legacy + BLE 5 Extended Advertising. Default: `false`.
+  - `mode` (string): `"extended"` (default), `"ext-legacy"`, `"legacy"`, or `"dual"`.
+  - `advertising_interval_ms` (int): interval for BLE 4 legacy advertisements in ms. Default: `200`.
+  - `extended_interval_ms` (int): pulse rate for BLE 5 extended pack in ms. Default: same as `advertising_interval_ms`.
 - `wifi` (object): Wi-Fi-specific settings (optional).
   - `channel` (int): Wi-Fi channel for injection. Default: `6`.
   - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`.
@@ -84,11 +82,13 @@ IE (OUI 0xFA0BBC). Requires a Wi-Fi adapter in monitor mode. Note that many rece
 Sends ASTM F3411-22 payloads as BLE advertisements with Service Data UUID 0xFFFA. 
 Requires a Linux Bluetooth adapter (HCI) and root.
 
-**Legacy Mode (BLE 4)**: Uses `ADV_NONCONN_IND` packets. Since one legacy advertisement can only hold a single ASTM message, the tool **rotates** through a sequence (2x Location + 2x Statics) to transmit the full drone state. Each drone occupies the radio for `4 * advertising_interval_ms` (e.g., 800ms by default).
+**Extended Mode (`extended`, default)**: Uses LE Coded PHY (Handle 1) to transmit a full **ODID Message Pack** (containing all drone data) in a single advertisement.
 
-**Extended Mode (BLE 5)**: Uses LE Coded PHY to transmit a full **ODID Message Pack** (containing all drone data) in a single advertisement. For maximum compatibility, the tool still maintains the Legacy rotation in the background while the Extended advertisement pulses.
+**Extended Legacy Mode (`ext-legacy`)**: Transmits standard BLE 4 `ADV_NONCONN_IND` legacy advertisements (Handle 0, 1M PHY) using the BLE 5 Extended Advertising HCI API. Use this when running on modern BLE 5 adapters that disallow legacy HCI commands (`0x2006`/`0x2008`).
 
-In this mode, `advertising_interval_ms` sets the interval for the legacy advertisements, while `extended_interval_ms` sets the interval for the extended advertisements.
+**Classic Legacy Mode (`legacy`)**: Uses classic BLE 4.0 HCI opcodes (`0x2005`–`0x200A`) for older BLE 4.x USB adapters that do not support extended HCI commands.
+
+**Dual Mode (`dual`)**: Concurrently broadcasts both BLE 4 Legacy (Handle 0) and BLE 5 Extended (Handle 1).
 
 ### `both`
 Sends on Wi-Fi and BLE simultaneously.

@@ -22,8 +22,8 @@ sudo .venv/bin/python3 spoof_drones.py -t wifi -i wlan1 -r 1 -l 47.376340 8.5312
 # BLE 5 Extended Advertising (5 drones, realistic location)
 sudo .venv/bin/python3 spoof_drones.py -t ble --ble-adapter hci0 -r 5 -l 47.376340 8.531256
 
-# BLE 4 Legacy Advertising (5 drones, far away location)
-sudo .venv/bin/python3 spoof_drones.py -t ble --ble-legacy -r 5 -l 34.0522 -118.2437
+# BLE 4 Legacy Advertising (5 drones, via Extended HCI for modern adapters)
+sudo .venv/bin/python3 spoof_drones.py -t ble --ble-mode ext-legacy -r 5 -l 34.0522 -118.2437
 
 # Wi-Fi NAN / Android Bridge (5 drones, realistic location)
 sudo .venv/bin/python3 spoof_drones.py -t nan --nan-port 8080 -r 5 -l 47.376340 8.531256
@@ -64,12 +64,15 @@ sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t wifi -i wla
 # Execute on BLE 5 Extended Advertising
 sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t ble --ble-adapter hci0
 
-# Execute on BLE 4 Legacy Advertising
-sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t ble --ble-legacy
+# Execute on BLE 4 Legacy Advertising (via Extended HCI)
+sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t ble --ble-mode ext-legacy
 
 # Execute on both Wi-Fi and BLE 5 simultaneously
 sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t both
 ```
+
+### Potential Step 3: Modify the scenario to use the same Basic ID across drones
+This can be especially interesting if the receiver does not distinguish between drones using the MAC address, so it can be evaluated whether the Basic ID is used instead.
 
 ---
 
@@ -213,5 +216,3 @@ sudo .venv/bin/python3 fuzz_rid.py -t ble --ble-adapter hci0 -f auth_pages -n 3 
 # Test command injection & DOM XSS payload resilience across ALL transport mediums (Wi-Fi + BLE + NAN)
 sudo .venv/bin/python3 fuzz_rid.py -t all -i wlan1 --ble-adapter hci0 --nan-port 8080 -f string_inject
 ```
-
-

@@ -57,10 +57,12 @@ def parse_args() -> argparse.Namespace:
                         help="Interval for BLE 4 legacy advertisements in ms (default: 200)")
     parser.add_argument("--ble-extended-interval", type=int, default=None,
                         help="Interval override for BLE 5 extended advertisements in ms (default: same as --ble-interval)")
-    parser.add_argument("--ble-legacy", action="store_true", default=None,
-                        help="Use older BT4 Legacy Advertising only (for older USB adapters that do not support BLE 5 Extended)")
-    parser.add_argument("--ble-dual", action="store_true", default=None,
-                        help="Enable dual broadcast of both BT4 Legacy and BT5 Extended payloads simultaneously (reduces concurrency)")
+    parser.add_argument("--ble-mode", type=str, default=None,
+                        choices=["extended", "ext-legacy", "ext_legacy", "legacy", "dual"],
+                        help="BLE transmission mode: 'extended' (BLE 5 Coded PHY ODID Pack, default), "
+                             "'ext-legacy' (BLE 4 Legacy PDUs via Extended HCI commands, for modern BLE 5 adapters), "
+                             "'legacy' (BLE 4 Legacy Advertising via classic HCI commands), "
+                             "or 'dual' (both BLE 4 Legacy + BLE 5 Extended)")
     parser.add_argument("--wifi-ess", action="store_true", default=None,
                         help="Set the ESS capability bit on Wi-Fi beacons "
                              "(default: off; spoofed drone is not advertised as an AP)")
@@ -100,7 +102,7 @@ def load_config(path: str) -> dict:
 
 def create_backends(transport: str, interface: str, ble_adapter: str,
                     ble_interval: int, ble_extended_interval: int = None,
-                    ble_legacy: bool = False, ble_dual: bool = False,
+                    ble_mode: str = "extended",
                     wifi_ess: bool = False,
                     wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024,
                     nan_port: int = 8080, nan_mode: str = "bridge",
@@ -115,7 +117,8 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
         backends.append(WifiBackend(interface, ess=wifi_ess, channel=wifi_channel, beacon_interval=wifi_beacon_interval))
 
     if transport in ("ble", "both", "all"):
-        if ble_legacy:
+        mode = ble_mode.replace("_", "-") if ble_mode else "extended"
+        if mode == "legacy":
             from drone_rid_spoofer.transport.ble import BleLegacyBackend
             backends.append(BleLegacyBackend(
                 adapter=ble_adapter,
@@ -126,8 +129,8 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
             backends.append(BleExtendedBackend(
                 adapter=ble_adapter,
                 legacy_interval_ms=ble_interval,
-                extended_interval_ms=ble_extended_interval,
-                pure_bt5=not ble_dual
+                extended_interval_ms=ble_extended_interval if ble_extended_interval is not None else ble_interval,
+                mode=mode
             ))
 
     if transport in ("nan", "all"):
@@ -159,13 +162,16 @@ def main() -> None:
 
         if args.interface is None:
             args.interface = config_global.get("interface", "wlan1")
+
         if args.interval is None:
-            args.interval = config_global.get("interval", 1.0)
+            args.interval = float(config_global.get("interval", 1.0))
+
         if args.random is None:
-            args.random = config_global.get("random", 1)
+            args.random = int(config_global.get("random", 1))
+
         if args.location is None:
-            cfg_location = config_global.get("location")
-            if cfg_location:
+            if "location" in config_global:
+                cfg_location = config_global["location"]
                 if len(cfg_location) != 2:
                     raise ValueError("global.location must have two values: [lat, lng]")
                 args.location = parse_location(str(cfg_location[0]), str(cfg_location[1]))
@@ -187,13 +193,11 @@ def main() -> None:
         if args.ble_extended_interval is None:
             args.ble_extended_interval = ble_config.get("extended_interval_ms", args.ble_interval)
 
-        if args.ble_legacy is None:
-            ble_config = config_global.get("ble", {})
-            args.ble_legacy = bool(ble_config.get("legacy", False))
+        # Resolve BLE mode from CLI flag or scenario config
+        if getattr(args, 'ble_mode', None) is None:
+            args.ble_mode = ble_config.get("mode", "extended")
 
-        if args.ble_dual is None:
-            ble_config = config_global.get("ble", {})
-            args.ble_dual = bool(ble_config.get("dual", False))
+        args.ble_mode = args.ble_mode.replace("_", "-")
 
         if args.wifi_ess is None:
             wifi_config = config_global.get("wifi", {})
@@ -229,8 +233,7 @@ def main() -> None:
         backends = create_backends(args.transport, args.interface, args.ble_adapter,
                                    args.ble_interval, 
                                    ble_extended_interval=args.ble_extended_interval,
-                                   ble_legacy=args.ble_legacy,
-                                   ble_dual=args.ble_dual,
+                                   ble_mode=args.ble_mode,
                                    wifi_ess=args.wifi_ess,
                                    wifi_channel=args.wifi_channel,
                                    wifi_beacon_interval=args.wifi_beacon_interval,

@@ -123,10 +123,8 @@ def main() -> None:
                         help="Wi-Fi monitor interface (default: wlan1)")
     parser.add_argument("--ble-adapter", default="hci0",
                         help="BLE adapter name (default: hci0)")
-    parser.add_argument("--ble-legacy", action="store_true",
-                        help="Use BLE 4 Legacy Advertising only")
-    parser.add_argument("--ble-dual", action="store_true",
-                        help="Use dual broadcast of both BLE 4 and BLE 5")
+    parser.add_argument("--ble-mode", choices=["extended", "ext-legacy", "legacy", "dual"], default="extended",
+                        help="BLE mode: 'extended' (default), 'ext-legacy', 'legacy', or 'dual'")
     parser.add_argument("--nan-port", type=int, default=8080,
                         help="TCP port for NAN Android bridge (default: 8080)")
     parser.add_argument("--no-self-id", action="store_true", default=False,
@@ -146,8 +144,7 @@ def main() -> None:
         ble_adapter=args.ble_adapter,
         ble_interval=int(args.interval * 1000),
         ble_extended_interval=int(args.interval * 1000),
-        ble_legacy=args.ble_legacy,
-        ble_dual=args.ble_dual,
+        ble_mode=args.ble_mode,
         wifi_ess=False,
         wifi_channel=args.wifi_channel,
         wifi_beacon_interval=args.interval,

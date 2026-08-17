@@ -53,6 +53,18 @@ sudo ./interface-monitor.sh <interface-name>
 sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
 ```
 
+> **Important — Legal Compliance & Wi-Fi Regulatory Domain**
+>
+> When conducting wireless experiments, **users are solely responsible for ensuring all transmissions strictly comply with local telecommunications, radio spectrum, and aviation regulations.**
+>
+> On Linux, the wireless regulatory domain enforces the legal frequency bands, authorized channels, and maximum transmit power (EIRP) limits for your physical location:
+> - **Always set the regulatory domain to match your actual geographic jurisdiction**:
+>   ```bash
+>   sudo iw reg set <YOUR-LOCAL-COUNTRY-CODE>   # e.g., CH (Switzerland), DE (Germany), US, etc.
+>   ```
+> - **Do NOT set an arbitrary or foreign regulatory domain** simply to circumvent local frequency restrictions, radar detection (DFS) rules, or transmission bans on specific channels (such as 5.8 GHz channels 149–165). Transmitting on unauthorized frequencies or exceeding local power limits violates national radio laws.
+> - You can verify your active channel permissions, DFS requirements, and power limits at any time using `iw reg get`.
+
 > **Tip — tab-completion & interactive picker**
 >
 > Run without arguments to get an interactive interface picker with state/driver/MAC info:
@@ -194,9 +206,7 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | | `--ble-adapter` | `str` | config or `hci0` | BLE HCI adapter name |
 | | `--ble-interval` | `int` | `200` | BLE 4 legacy advertising interval (ms) |
 | | `--ble-extended-interval` | `int` | same as legacy | BLE 5 extended advertising interval (ms) |
-| | `--ble-extended` | - | - | Enable BLE 5 Extended Advertising (Coded PHY) |
-| | `--ble-legacy` | - | - | Force BLE 4 Legacy Advertising mode |
-| | `--ble-dual` | - | - | Enable dual BLE 4 Legacy + BLE 5 Extended Advertising |
+| | `--ble-mode` | `extended\|ext-legacy\|legacy\|dual` | `extended` | BLE transmission mode (`extended`=Coded PHY, `ext-legacy`=BLE4 via Ext HCI, `legacy`=classic HCI, `dual`=both) |
 | | `--wifi-channel`| `int` | config or `6` | Wi-Fi channel for injection |
 | | `--wifi-ess` | - | - | Set ESS capability (make beacon look like an AP) |
 | | `--wifi-beacon-interval` | `float` | config or `0.1024` | Wi-Fi beacon transmission interval in seconds |
