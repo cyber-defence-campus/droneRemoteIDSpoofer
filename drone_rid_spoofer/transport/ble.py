@@ -467,15 +467,8 @@ class BleLegacyBackend(_BleBase):
                 all_sequences.append((drone, send_sequence))
                 total_messages += len(send_sequence)
 
-            if total_messages > 0:
-                # Dynamically calculate interval to fit all messages into 1 second
-                # Reserve ~100ms for HCI command overhead
-                dwell_time = 0.9 / total_messages
-                dwell_time = max(0.02, min(self.advertising_interval_ms / 1000.0, dwell_time))
-                current_interval_ms = dwell_time * 1000
-            else:
-                current_interval_ms = self.advertising_interval_ms
-                dwell_time = self.advertising_interval_ms / 1000.0
+            current_interval_ms = self.advertising_interval_ms
+            dwell_time = self.advertising_interval_ms / 1000.0
 
             for drone, send_sequence in all_sequences:
                 if not self._running:
@@ -541,6 +534,7 @@ class BleExtendedBackend(_BleBase):
                  protocol_version: int = 2,
                  pure_bt5: Optional[bool] = None,
                  mode: str = "extended",
+                 optimize_params: bool = True,
                  fuzz_config: dict = None):
         self.legacy_interval_ms = legacy_interval_ms if legacy_interval_ms is not None else 100
         effective_extended_interval = extended_interval_ms if extended_interval_ms is not None else self.legacy_interval_ms
@@ -551,6 +545,10 @@ class BleExtendedBackend(_BleBase):
             self.mode = mode.replace("_", "-")
 
         self.pure_bt5 = (self.mode == "extended")
+        if fuzz_config and "optimize_params" in fuzz_config:
+            self.optimize_params = bool(fuzz_config["optimize_params"])
+        else:
+            self.optimize_params = optimize_params
         super().__init__(adapter, effective_extended_interval, protocol_version, fuzz_config=fuzz_config)
 
     def _init_advertising(self) -> None:
@@ -558,10 +556,11 @@ class BleExtendedBackend(_BleBase):
         self._set_advertising_enable(False, [0x00, 0x01])
         if self.mode in ("ext-legacy", "dual"):
             # Handle 0: legacy PDU, 1M PHY — SID 0
-            self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00)
+            self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=self.legacy_interval_ms if self.optimize_params else None)
+            self._last_configured_legacy_interval = self.legacy_interval_ms
         if self.mode in ("extended", "dual"):
             # Handle 1: extended PDU, LE Coded PHY — SID 1
-            self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01)
+            self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms if self.optimize_params else None)
 
     def _disable_advertising(self) -> None:
         active_handles = []
@@ -682,13 +681,8 @@ class BleExtendedBackend(_BleBase):
                 if self.mode in ("ext-legacy", "dual"):
                     total_legacy_messages += len(send_sequence)
 
-            if total_legacy_messages > 0:
-                dynamic_legacy_dwell = 0.9 / total_legacy_messages
-                dynamic_legacy_dwell = max(0.02, min(self.legacy_interval_ms / 1000.0, dynamic_legacy_dwell))
-                current_legacy_interval_ms = dynamic_legacy_dwell * 1000
-            else:
-                current_legacy_interval_ms = self.legacy_interval_ms
-                dynamic_legacy_dwell = self.legacy_interval_ms / 1000.0
+            current_legacy_interval_ms = self.legacy_interval_ms
+            dynamic_legacy_dwell = self.legacy_interval_ms / 1000.0
 
             for drone, messages, send_sequence in all_sequences:
                 if not self._running:
@@ -701,12 +695,18 @@ class BleExtendedBackend(_BleBase):
                 counter = self._extended_counters.get(drone_key, 0)
 
                 if self.mode == "ext-legacy":
-                    # 1. Disable broadcasting Handle 0 before altering params
-                    self._set_advertising_enable(False, [0x00])
-
-                    # 2. Re-apply Params and Address on Handle 0 (Legacy PDU)
-                    self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
-                    self._set_random_address(0x00, drone.ble_address)
+                    if self.optimize_params:
+                        if not hasattr(self, '_last_configured_legacy_interval') or self._last_configured_legacy_interval != current_legacy_interval_ms:
+                            self._set_advertising_enable(False, [0x00])
+                            self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                            self._last_configured_legacy_interval = current_legacy_interval_ms
+                        self._set_random_address(0x00, drone.ble_address)
+                    else:
+                        # 1. Disable broadcasting Handle 0 before altering params
+                        self._set_advertising_enable(False, [0x00])
+                        # 2. Re-apply Params and Address on Handle 0 (Legacy PDU)
+                        self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                        self._set_random_address(0x00, drone.ble_address)
 
                     # 3. Manually cycle through Legacy messages (Handle 0)
                     for msg in send_sequence:
@@ -724,8 +724,9 @@ class BleExtendedBackend(_BleBase):
 
                 elif self.mode == "extended":
                     # Pure BT5: Extended Message Pack on Handle 1 (Coded PHY)
-                    self._set_advertising_enable(False, [0x01])
-                    self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms)
+                    if not self.optimize_params:
+                        self._set_advertising_enable(False, [0x01])
+                        self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms)
                     self._set_random_address(0x01, drone.ble_address)
 
                     pack_ad = self._build_message_pack_ad(messages, counter)
@@ -739,13 +740,19 @@ class BleExtendedBackend(_BleBase):
 
                 else:  # dual mode
                     # Dual: Both Handle 1 (Extended) and Handle 0 (Legacy)
-                    self._set_advertising_enable(False, [0x00, 0x01])
-
-                    self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
-                    self._set_random_address(0x00, drone.ble_address)
-
-                    self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms)
-                    self._set_random_address(0x01, drone.ble_address)
+                    if self.optimize_params:
+                        if not hasattr(self, '_last_configured_legacy_interval') or self._last_configured_legacy_interval != current_legacy_interval_ms:
+                            self._set_advertising_enable(False, [0x00])
+                            self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                            self._last_configured_legacy_interval = current_legacy_interval_ms
+                        self._set_random_address(0x00, drone.ble_address)
+                        self._set_random_address(0x01, drone.ble_address)
+                    else:
+                        self._set_advertising_enable(False, [0x00, 0x01])
+                        self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                        self._set_random_address(0x00, drone.ble_address)
+                        self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms)
+                        self._set_random_address(0x01, drone.ble_address)
 
                     pack_ad = self._build_message_pack_ad(messages, counter)
                     self._set_advertising_data(0x01, pack_ad)
@@ -766,6 +773,9 @@ class BleExtendedBackend(_BleBase):
                     self._set_advertising_enable(False, [0x01])
 
                 self._extended_counters[drone_key] = counter
+
+
+
 
             elapsed = time.monotonic() - start_time
             if elapsed > 1.0:
