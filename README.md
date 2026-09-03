@@ -221,8 +221,11 @@ CLI flags override values from scenario config files.
 
 ## Advanced Security Research & Evaluation Suite
 
-In addition to `spoof_drones.py`, the repository includes specialized security evaluation, fuzzing, and takeover modules:
+In addition to `spoof_drones.py`, the repository includes specialized security evaluation, fuzzing, scanning, and takeover modules:
 
+- **Combined Remote ID Sniffer & DB Logger (`scanner/`)**: Real-time simultaneous Wi-Fi Beacon and BLE sniffer with live curses telemetry dashboard, message pack parser, SQLite database logging (`rid_capture.db`), and CLI query tool (`query_rid_db.py`). See [scanner/README.md](scanner/README.md).
+- **Capacity & RF Benchmarking Suite (`evaluation/`)**: Automated multi-mode benchmark orchestrator (`run_ble_benchmark.py`), high-speed raw socket Wi-Fi sniffer (`wifi_capacity.py`), and BLE capacity tester (`ble_capacity.py`) with publication-ready plotting scripts.
+- **Receiver Vulnerability PoCs (`experiments/`)**: Targeted proof-of-concept injection and fuzzing scripts evaluating parser vulnerabilities and web UI flaws across specific receiver hardware/apps (DroneAware, DroneScout, SkySpy, Sparrow).
 - **Ephemeral Swarm (`ephemeral_swarm.py`)**: High-density identity rotation and multi-transport saturation testing across Wi-Fi, BLE, and NAN.
 - **OTA Fuzzing Suite (`fuzz_rid.py`)**: Automated fuzzing suite for testing receiver resilience against malformed ASTM payloads, XSS/command injection strings, and pagination buffer overflows.
 - **Airborne Takeover (`takeover_figure8.py` & `takeover_predictive.py`)**: Real-time drone duplication, takeover simulation, and predictive trajectory hiding overlays.
