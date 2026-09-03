@@ -290,10 +290,9 @@ class NanManualBackend(TransportBackend):
             raise
 
         # Precompute Radiotap header
-        rate_500kbps = int(self.rate_mbps * 2)
         try:
             from scapy.all import RadioTap
-            self.radiotap_bytes = bytes(RadioTap(present="Rate", Rate=rate_500kbps))
+            self.radiotap_bytes = bytes(RadioTap(present="Rate", Rate=self.rate_mbps))
         except Exception:
             # Fallback 8-byte minimal RadioTap header if Scapy instantiation fails or module missing
             self.radiotap_bytes = b"\x00\x00\x08\x00\x00\x00\x00\x00"

@@ -81,11 +81,36 @@ class WifiBackend(TransportBackend):
         while self._running and not self._drones:
             time.sleep(0.01)
             
+        dest_bytes = bytes.fromhex(self.DEST_ADDR.replace(':', ''))
+        
+        is_5ghz = self.channel >= 36
+        if is_5ghz:
+            supp_rates = b'\x8c\x12\x98\x24'  # 6, 9, 12, 18 Mbps (6, 12 basic)
+            ext_rates = b'\x30\x48\x60\x6c'   # 24, 36, 48, 54 Mbps
+            effective_rate = 6.0 if self.rate_mbps <= 1.0 else self.rate_mbps
+        else:
+            supp_rates = self.SUPPORTED_RATES
+            ext_rates = self.EXTENDED_SUPPORTED_RATES
+            effective_rate = self.rate_mbps
+
+        # Pre-compile static IEs that never change across drones
+        ie_rates = dot11.Dot11Elt(ID='Rates', info=supp_rates)
+        ie_dsset = dot11.Dot11Elt(ID='DSset', info=bytes([self.channel & 0xFF]))
+        ie_tim = dot11.Dot11Elt(ID='TIM', info=b'\x00\x01\x00\x00')
+        ie_erp = dot11.Dot11Elt(ID='ERPinfo', info=b'\x00')
+        ie_esr = dot11.Dot11Elt(ID='ESRates', info=ext_rates)
+        static_ies_bytes = bytes(ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr)
+        
+        radiotap_bytes = bytes(dot11.RadioTap(present='Rate', Rate=effective_rate))
+
         next_tick = time.time()
         while self._running:
             t_loop_start = time.time()
             packets = []
             current_tsf = int(time.time() * 1000000) % (2**64)
+            
+            # Beacon Base (Timestamp & Cap) is identical for all drones in the same batch
+            beacon_base_bytes = bytes(dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf))
             
             t_build_start = time.time()
             for drone in self._drones:
@@ -93,7 +118,23 @@ class WifiBackend(TransportBackend):
                     continue
                     
                 serial = drone.serial
-                mac_addr = drone.mac_address
+                mac_addr = drone.mac_address.upper()
+                
+                # Check for fuzzing mutations
+                if self.fuzz_config and self.fuzz_config.get("enabled"):
+                    # Pass through the whole Scapy layer pipeline if mutating/fuzzing
+                    beacon_payload = self._packet_builder.build_messages(drone)
+                    mac_header = dot11.Dot11(addr1=self.DEST_ADDR, addr2=drone.mac_address, addr3=drone.mac_address)
+                    beacon_base = dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf)
+                    ie_ssid = dot11.Dot11Elt(ID='SSID', info=self.SSID_PREFIX + serial, len=len(self.SSID_PREFIX + serial))
+                    vendor_ie = self._build_vendor_specific_ie(beacon_payload)
+                    frame_scapy = mac_header / beacon_base / ie_ssid / ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr / vendor_ie
+                    mutated_frame = self._mutate_packet(frame_scapy)
+                    
+                    radiotap = dot11.RadioTap(present='Rate', Rate=effective_rate)
+                    frame = bytes(radiotap) + bytes(mutated_frame)
+                    packets.append(frame)
+                    continue
                 
                 # Build ASTM messages from current drone state
                 messages = self._packet_builder(drone)
@@ -120,30 +161,24 @@ class WifiBackend(TransportBackend):
     
                     serial_str = serial.decode('ascii', errors='replace')
                     ssid = (self.SSID_PREFIX + serial_str)[: self.SSID_MAX_LEN]
-                    ie_ssid = dot11.Dot11Elt(ID='SSID', info=ssid)
-                    ie_rates = dot11.Dot11Elt(ID='Rates', info=self.SUPPORTED_RATES)
-                    ie_dsset = dot11.Dot11Elt(ID='DSset', info=bytes([self.channel]))
-                    ie_tim = dot11.Dot11Elt(ID='TIM', info=b'\x00\x01\x00\x00')
-                    ie_erp = dot11.Dot11Elt(ID='ERPinfo', info=b'\x00')
-                    ie_esr = dot11.Dot11Elt(ID='ESRates', info=self.EXTENDED_SUPPORTED_RATES)
-                    ie_vendor = dot11.Dot11Elt(ID=221, info=self.OUI + vendor_data)
-    
-                    rate_500kbps = int(self.rate_mbps * 2)
-                    radiotap = dot11.RadioTap(present='Rate', Rate=rate_500kbps)
-                    ies = ie_ssid / ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr / ie_vendor
                     
-                    # Dynamically instantiate the header to avoid thread contention on shared Scapy objects
-                    dot11_base = dot11.Dot11(
-                        type=0, subtype=8,
-                        addr1=self.DEST_ADDR,
-                        addr2=mac_addr,
-                        addr3=mac_addr,
-                        SC=(seq_num << 4)
-                    )
-                    beacon_base = dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf)
+                    # 1. Dynamic SSID IE: ID=0, Length, Payload
+                    ssid_bytes = ssid.encode('ascii', errors='replace')
+                    ie_ssid_bytes = b'\x00' + bytes([len(ssid_bytes)]) + ssid_bytes
                     
-                    frame = radiotap / dot11_base / beacon_base / ies
-                    packets.append(bytes(frame))
+                    # 2. Dynamic Vendor IE: ID=221 (0xDD), Length, OUI + Payload
+                    vendor_info = self.OUI + vendor_data
+                    ie_vendor_bytes = b'\xdd' + bytes([len(vendor_info)]) + vendor_info
+                    
+                    # 3. Dynamic MAC Header: Frame Control (0x8000), Duration (0x0000), Addr1, Addr2, Addr3, Sequence
+                    import struct
+                    mac_bytes = bytes.fromhex(mac_addr.replace(':', ''))
+                    seq_ctrl = (seq_num << 4) & 0xFFFF
+                    mac_header_bytes = b'\x80\x00\x00\x00' + dest_bytes + mac_bytes + mac_bytes + struct.pack('<H', seq_ctrl)
+                    
+                    # Construct final raw frame in microseconds
+                    frame = radiotap_bytes + mac_header_bytes + beacon_base_bytes + ie_ssid_bytes + static_ies_bytes + ie_vendor_bytes
+                    packets.append(frame)
 
                 
             t_build_end = time.time()
@@ -171,7 +206,11 @@ class WifiBackend(TransportBackend):
                 # We missed our deadline. Catch up to 'now' so we don't force a full sleep cycle.
                 miss_amount = now - next_tick
                 self.missed_deadlines += 1
-                logger.warning(f"Wi-Fi deadline missed by {miss_amount*1000:.2f}ms! (Processing took longer than beacon interval)")
+                
+                # Throttle the logging to prevent a cascading I/O terminal bottleneck
+                #if self.missed_deadlines == 1 or self.missed_deadlines % 50 == 0:
+                logger.warning(f"Wi-Fi deadline missed by {miss_amount*1000:.2f}ms! (Total missed: {self.missed_deadlines})")
+                
                 next_tick = now
                 
             sleep_time = next_tick - time.time()
