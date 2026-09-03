@@ -214,11 +214,21 @@ def parse_packet_metadata(data: bytes) -> Tuple[str, str, Optional[int]]:
 
     aa_idx = data.find(BLE_ADV_ACCESS_ADDR)
     if aa_idx != -1:
-        # 1. Try to extract RSSI from Nordic Radio Header before Access Address
-        for offset in (aa_idx - 1, 5, 2):
-            if 0 <= offset < len(data):
+        # 1. Extract RSSI from Nordic Radio Header preceding Access Address
+        # In nRF Sniffer v2/v3 (DLT_NORDIC_BLE / NRFS2_Packet):
+        # Header: Board(1) + Len(2) + Ver(1) + Cnt(2) + Type(1) + HdrLen(1) + Flags(1) + Ch(1) + RSSI(1) + EvtCnt(2) + DeltaTime(4)
+        # RSSI is at offset 10 (with board_id), offset 9 (without board_id), or aa_idx - 7.
+        for offset in (10, 9, aa_idx - 7, aa_idx - 6, aa_idx - 8):
+            if 0 <= offset < aa_idx:
                 val = struct.unpack("<b", bytes([data[offset]]))[0]
-                if -120 <= val <= -20:
+                if -120 <= val <= -10:
+                    rssi_dbm = int(val)
+                    break
+        # Fallback heuristic: search preceding header bytes for valid dBm reading
+        if rssi_dbm is None:
+            for offset in range(min(aa_idx, 20)):
+                val = struct.unpack("<b", bytes([data[offset]]))[0]
+                if -110 <= val <= -20:
                     rssi_dbm = int(val)
                     break
                     
@@ -253,14 +263,16 @@ def parse_packet_metadata(data: bytes) -> Tuple[str, str, Optional[int]]:
                         mac_bytes = payload[0:6]
                         mac_address = ":".join(f"{b:02X}" for b in reversed(mac_bytes))
     else:
-        # Try finding valid RSSI in first 10 bytes if Access Address was stripped
-        for offset in range(min(10, len(data))):
-            val = struct.unpack("<b", bytes([data[offset]]))[0]
-            if -110 <= val <= -30:
-                rssi_dbm = int(val)
-                break
+        # Try finding valid RSSI in first 16 bytes if Access Address was stripped
+        for offset in (10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0):
+            if offset < len(data):
+                val = struct.unpack("<b", bytes([data[offset]]))[0]
+                if -110 <= val <= -20:
+                    rssi_dbm = int(val)
+                    break
 
     return pdu_type_str, mac_address, rssi_dbm
+
 
 
 def process_packet(
