@@ -30,26 +30,48 @@ class ASTM_F3411_SpecParser:
         return self.results
 
     def _process_message(self, block):
+        if len(block) < 25:
+            return
         msg_type = (block[0]) >> 4
         if msg_type not in [0x0, 0x1, 0x2, 0x3, 0x4, 0x5]:
-            return # Skip or handle error
+            return
 
         if msg_type == 0x0: self._decode_basic_id(block)
         elif msg_type == 0x1: self._decode_location(block)
+        elif msg_type == 0x2: self._decode_auth(block)
         elif msg_type == 0x3: self._decode_self_id(block)
         elif msg_type == 0x4: self._decode_system(block)
         elif msg_type == 0x5: self._decode_operator_id(block)
 
     def _decode_location(self, b):
+        ew_dir = (b[1] >> 1) & 0x01
+        speed_mult = b[1] & 0x01
+        track_dir = b[2] + 180 if ew_dir else b[2]
+        speed_raw = b[3]
+        speed_mps = (speed_raw * 0.25) if speed_mult == 0 else (63.75 + speed_raw * 0.75)
         lat = struct.unpack('<i', b[5:9])[0] / 1e7
         lon = struct.unpack('<i', b[9:13])[0] / 1e7
-        alt_enc = struct.unpack('<H', b[15:17])[0]
-        alt_m = (alt_enc * 0.5) - 1000
-        self.results.append({"type": "Location", "lat": lat, "lon": lon, "alt": alt_m})
+        p_alt_raw = struct.unpack('<H', b[13:15])[0]
+        g_alt_raw = struct.unpack('<H', b[15:17])[0]
+        p_alt_m = (p_alt_raw * 0.5) - 1000 if p_alt_raw != 0 else None
+        g_alt_m = (g_alt_raw * 0.5) - 1000 if g_alt_raw != 0 else None
+        self.results.append({
+            "type": "Location",
+            "lat": lat,
+            "lon": lon,
+            "alt": g_alt_m or p_alt_m,
+            "speed": speed_mps,
+            "heading": track_dir
+        })
 
     def _decode_basic_id(self, b):
         uas_id = b[2:22].decode('ascii', errors='ignore').strip('\x00')
         self.results.append({"type": "Basic ID", "id": uas_id})
+
+    def _decode_auth(self, b):
+        auth_type = (b[1] >> 4) & 0x0F
+        page_num = b[1] & 0x0F
+        self.results.append({"type": "Auth", "auth_type": auth_type, "page": page_num, "data": b[2:25].hex()})
 
     def _decode_operator_id(self, b):
         op_id = b[2:22].decode('ascii', errors='ignore').strip('\x00')
