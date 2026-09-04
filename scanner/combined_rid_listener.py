@@ -48,459 +48,38 @@ logger = logging.getLogger("CombinedRIDListener")
 
 
 # ============================================================================
-# ASTM F3411 Protocol Constants & Comprehensive Enum Lookup Tables
+# ASTM F3411 Protocol Constants & Spec Parser (Imported from sniffparser.py)
 # ============================================================================
 
-ASTM_OUI = b"\xfa\x0b\xbc"      # OpenDroneID / ASTM OUI in Wi-Fi Vendor IE
-APP_CODE_RID = 0x0D             # Application Code for Drone Remote ID
-BLE_RID_UUID = b"\xfa\xff"      # 16-bit UUID 0xFFFA (Little-Endian)
-OPENDRONEID_EPOCH_2019 = 1546300800  # 2019-01-01 00:00:00 UTC Unix Epoch
-
-MSG_TYPE_NAMES = {
-    0x0: "Basic ID",
-    0x1: "Location",
-    0x2: "Auth",
-    0x3: "Self-ID",
-    0x4: "System",
-    0x5: "Operator ID",
-    0xF: "Message Pack",
-}
-
-PROTO_VERSION_NAMES = {
-    0: "ASTM F3411-19 (v0)",
-    1: "ASD-STAN prEN 4709-002 (v1)",
-    2: "ASTM F3411-22 (v2)",
-}
-
-ID_TYPE_NAMES = {
-    0: "None",
-    1: "Serial Number (ANSI/CTA-2063-A)",
-    2: "CAA Registration ID",
-    3: "UTM Assigned UUID",
-    4: "Specific Session ID (ICAO Managed / Private)",
-}
-
-UA_TYPE_NAMES = {
-    0: "None",
-    1: "Aeroplane (Fixed Wing)",
-    2: "Helicopter / Multirotor",
-    3: "Gyroplane",
-    4: "Hybrid Lift (VTOL)",
-    5: "Ornithopter",
-    6: "Glider",
-    7: "Kite",
-    8: "Free Balloon",
-    9: "Captive Balloon",
-    10: "Airship (Blimp)",
-    11: "Free Fall Parachute",
-    12: "Rocket",
-    13: "Tethered Powered Aircraft",
-    14: "Ground Obstacle",
-    15: "Other",
-}
-
-STATUS_NAMES = {
-    0: "Undeclared",
-    1: "Ground",
-    2: "Airborne",
-    3: "Emergency",
-    4: "Remote ID System Failure (v2)",
-}
-
-HEIGHT_TYPE_NAMES = {
-    0: "Above Takeoff",
-    1: "Above Ground Level (AGL)",
-}
-
-HORIZ_ACCURACY_NAMES = {
-    0: "Unknown",
-    1: "< 10 NM (18.52 km)",
-    2: "< 4 NM (7.408 km)",
-    3: "< 2 NM (3.704 km)",
-    4: "< 1 NM (1.852 km)",
-    5: "< 0.5 NM (926 m)",
-    6: "< 0.3 NM (555.6 m)",
-    7: "< 0.1 NM (185.2 m)",
-    8: "< 0.05 NM (92.6 m)",
-    9: "< 30 m",
-    10: "< 10 m",
-    11: "< 3 m",
-    12: "< 1 m",
-}
-
-VERT_ACCURACY_NAMES = {
-    0: "Unknown",
-    1: "> 150 m",
-    2: "< 150 m",
-    3: "< 45 m",
-    4: "< 25 m",
-    5: "< 10 m",
-    6: "< 3 m",
-    7: "< 1 m",
-}
-
-SPEED_ACCURACY_NAMES = {
-    0: "Unknown",
-    1: "< 10 m/s",
-    2: "< 3 m/s",
-    3: "< 1 m/s",
-    4: "< 0.3 m/s",
-}
-
-TIMESTAMP_ACCURACY_NAMES = {
-    0: "Unknown",
-    **{i: f"< {i*0.1:.1f} s" for i in range(1, 16)}
-}
-
-AUTH_TYPE_NAMES = {
-    0: "None",
-    1: "UAS ID Signature",
-    2: "Operator ID Signature",
-    3: "Message Set Signature",
-    4: "Network Remote ID",
-    5: "Specific Authentication (ICAO / Private)",
-}
-
-DESC_TYPE_NAMES = {
-    0: "Text",
-    1: "Emergency Status (v2)",
-    2: "Extended Status (v2)",
-}
-
-OPERATOR_LOCATION_TYPE_NAMES = {
-    0: "Takeoff Location",
-    1: "Live GNSS (Dynamic Pilot / GCS)",
-    2: "Fixed Location",
-}
-
-CLASSIFICATION_TYPE_NAMES = {
-    0: "Undeclared",
-    1: "European Union (EU)",
-}
-
-EU_CATEGORY_NAMES = {
-    0: "Undeclared",
-    1: "Open",
-    2: "Specific",
-    3: "Certified",
-}
-
-EU_CLASS_NAMES = {
-    0: "Undeclared",
-    1: "Class 0",
-    2: "Class 1",
-    3: "Class 2",
-    4: "Class 3",
-    5: "Class 4",
-    6: "Class 5",
-    7: "Class 6",
-}
-
-
-def sanitize_ascii_string(raw: bytes, max_len: int = 25) -> str:
-    """
-    Sanitize untrusted over-the-air ASCII string bytes:
-    1. Truncates at first null byte (0x00).
-    2. Strips all non-printable ASCII control characters (0x00-0x1F, 0x7F, ANSI ESC \x1b)
-       to prevent terminal escape injection (DA-03).
-    3. Retains only safe printable characters (0x20 to 0x7E).
-    """
-    cleaned = []
-    for b in raw[:max_len]:
-        if b == 0:
-            break
-        if 0x20 <= b <= 0x7E:
-            cleaned.append(chr(b))
-        else:
-            cleaned.append('?')  # Replace non-printable / control codes
-    return ''.join(cleaned).strip()
-
-
-def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
-    """
-    Decode a single 25-byte ASTM F3411 / OpenDroneID message block with full subparts,
-    accurate scaling formulas, human-readable enums, and protocol version metadata.
-    """
-    if len(block) < 25:
-        return None
-
-    header = block[0]
-    msg_type = (header >> 4) & 0x0F
-    proto_ver = header & 0x0F
-
-    result: Dict[str, Any] = {
-        "type": MSG_TYPE_NAMES.get(msg_type, f"Unknown (0x{msg_type:X})"),
-        "type_id": msg_type,
-        "proto_version": proto_ver,
-        "proto_version_name": PROTO_VERSION_NAMES.get(proto_ver, f"Reserved (v{proto_ver})"),
-        "raw_hex": block[:25].hex().upper(),
-        "raw_b64": base64.b64encode(block[:25]).decode('ascii')
-    }
-
-    try:
-        if msg_type == 0x0:  # Basic ID (Type 0)
-            id_type_raw = block[1]
-            id_type = (id_type_raw >> 4) & 0x0F
-            ua_type = id_type_raw & 0x0F
-            uas_id = sanitize_ascii_string(block[2:22], max_len=20)
-            result.update({
-                "id": uas_id,
-                "id_type": id_type,
-                "id_type_name": ID_TYPE_NAMES.get(id_type, f"Reserved ({id_type})"),
-                "ua_type": ua_type,
-                "ua_type_name": UA_TYPE_NAMES.get(ua_type, f"Reserved ({ua_type})"),
-            })
-
-        elif msg_type == 0x1:  # Location / Vector (Type 1)
-            b1 = block[1]
-            status = (b1 >> 4) & 0x0F
-            height_type = (b1 >> 2) & 0x01
-            ew_dir = (b1 >> 1) & 0x01
-            speed_mult = b1 & 0x01
-
-            dir_raw = block[2]
-            direction_deg = dir_raw + 180 if ew_dir else dir_raw
-            if direction_deg > 360:
-                direction_deg = None  # 361 = Invalid / Unknown
-
-            speed_raw = block[3]
-            if speed_raw == 255 and speed_mult == 0:
-                speed_mps = None
-            else:
-                speed_mps = (speed_raw * 0.25) if speed_mult == 0 else (63.75 + speed_raw * 0.75)
-
-            v_speed_raw = struct.unpack('<b', block[4:5])[0]
-            if v_speed_raw == 63:
-                v_speed_mps = None
-            else:
-                v_speed_mps = v_speed_raw * 0.5
-
-            lat_raw = struct.unpack('<i', block[5:9])[0]
-            lon_raw = struct.unpack('<i', block[9:13])[0]
-            lat = (lat_raw / 1e7) if (lat_raw != 0 or lon_raw != 0) else None
-            lon = (lon_raw / 1e7) if (lat_raw != 0 or lon_raw != 0) else None
-
-            p_alt_raw = struct.unpack('<H', block[13:15])[0]
-            p_alt_m = (p_alt_raw * 0.5 - 1000.0) if p_alt_raw != 0 else None
-
-            g_alt_raw = struct.unpack('<H', block[15:17])[0]
-            g_alt_m = (g_alt_raw * 0.5 - 1000.0) if g_alt_raw != 0 else None
-
-            height_raw = struct.unpack('<H', block[17:19])[0]
-            height_m = (height_raw * 0.5 - 1000.0) if height_raw != 0 else None
-
-            b19 = block[19]
-            vert_acc = (b19 >> 4) & 0x0F
-            horiz_acc = b19 & 0x0F
-
-            b20 = block[20]
-            baro_acc = (b20 >> 4) & 0x0F
-            speed_acc = b20 & 0x0F
-
-            ts_raw = struct.unpack('<H', block[21:23])[0]
-            timestamp_s = (ts_raw / 10.0) if ts_raw != 0xFFFF else None
-
-            b23 = block[23]
-            ts_acc = b23 & 0x0F
-
-            result.update({
-                "status": status,
-                "status_name": STATUS_NAMES.get(status, f"Reserved ({status})"),
-                "direction_deg": direction_deg,
-                "speed_mps": round(speed_mps, 2) if speed_mps is not None else None,
-                "speed_multiplier": speed_mult,
-                "vertical_speed_mps": round(v_speed_mps, 2) if v_speed_mps is not None else None,
-                "lat": lat,
-                "lon": lon,
-                "pressure_altitude_m": round(p_alt_m, 2) if p_alt_m is not None else None,
-                "geodetic_altitude_m": round(g_alt_m, 2) if g_alt_m is not None else None,
-                "height_m": round(height_m, 2) if height_m is not None else None,
-                "height_type": height_type,
-                "height_type_name": HEIGHT_TYPE_NAMES.get(height_type, "Unknown"),
-                "horizontal_accuracy": horiz_acc,
-                "horizontal_accuracy_name": HORIZ_ACCURACY_NAMES.get(horiz_acc, "Unknown"),
-                "vertical_accuracy": vert_acc,
-                "vertical_accuracy_name": VERT_ACCURACY_NAMES.get(vert_acc, "Unknown"),
-                "baro_accuracy": baro_acc,
-                "baro_accuracy_name": VERT_ACCURACY_NAMES.get(baro_acc, "Unknown"),
-                "speed_accuracy": speed_acc,
-                "speed_accuracy_name": SPEED_ACCURACY_NAMES.get(speed_acc, "Unknown"),
-                "timestamp_s": timestamp_s,
-                "timestamp_accuracy": ts_acc,
-                "timestamp_accuracy_name": TIMESTAMP_ACCURACY_NAMES.get(ts_acc, "Unknown"),
-            })
-
-        elif msg_type == 0x2:  # Auth (Type 2)
-            b1 = block[1]
-            auth_type = (b1 >> 4) & 0x0F
-            page_num = b1 & 0x0F
-
-            result.update({
-                "auth_type": auth_type,
-                "auth_type_name": AUTH_TYPE_NAMES.get(auth_type, f"Reserved ({auth_type})"),
-                "page_number": page_num,
-            })
-
-            if page_num == 0:
-                last_page_idx = block[2]
-                length = block[3]
-                ts_raw = struct.unpack('<I', block[4:8])[0]
-                auth_ts_epoch = (OPENDRONEID_EPOCH_2019 + ts_raw) if ts_raw > 0 else None
-                auth_ts_iso = datetime.fromtimestamp(auth_ts_epoch, timezone.utc).isoformat() if auth_ts_epoch else None
-                auth_data_hex = block[8:25].hex().upper()
-
-                result.update({
-                    "last_page_index": last_page_idx,
-                    "auth_data_length": length,
-                    "auth_timestamp_epoch": auth_ts_epoch,
-                    "auth_timestamp_iso": auth_ts_iso,
-                    "auth_data_hex": auth_data_hex,
-                })
-            else:
-                auth_data_hex = block[2:25].hex().upper()
-                result.update({
-                    "auth_data_hex": auth_data_hex,
-                })
-
-        elif msg_type == 0x3:  # Self-ID (Type 3)
-            desc_type = block[1]
-            desc = sanitize_ascii_string(block[2:25], max_len=23)
-            result.update({
-                "desc_type": desc_type,
-                "desc_type_name": DESC_TYPE_NAMES.get(desc_type, f"Reserved ({desc_type})"),
-                "description": desc,
-            })
-
-        elif msg_type == 0x4:  # System (Type 4)
-            b1 = block[1]
-            op_loc_type = b1 & 0x03
-            class_type = (b1 >> 2) & 0x07
-
-            op_lat_raw = struct.unpack('<i', block[2:6])[0]
-            op_lon_raw = struct.unpack('<i', block[6:10])[0]
-            pilot_lat = (op_lat_raw / 1e7) if (op_lat_raw != 0 or op_lon_raw != 0) else None
-            pilot_lon = (op_lon_raw / 1e7) if (op_lat_raw != 0 or op_lon_raw != 0) else None
-
-            area_count = struct.unpack('<H', block[10:12])[0]
-            area_radius = block[12] * 10
-
-            area_ceil_raw = struct.unpack('<H', block[13:15])[0]
-            area_ceil_m = (area_ceil_raw * 0.5 - 1000.0) if area_ceil_raw != 0 else None
-
-            area_floor_raw = struct.unpack('<H', block[15:17])[0]
-            area_floor_m = (area_floor_raw * 0.5 - 1000.0) if area_floor_raw != 0 else None
-
-            b17 = block[17]
-            category_eu = (b17 >> 4) & 0x0F
-            class_eu = b17 & 0x0F
-
-            op_alt_raw = struct.unpack('<H', block[18:20])[0]
-            pilot_alt_m = (op_alt_raw * 0.5 - 1000.0) if op_alt_raw != 0 else None
-
-            sys_ts_raw = struct.unpack('<I', block[20:24])[0]
-            sys_ts_epoch = (OPENDRONEID_EPOCH_2019 + sys_ts_raw) if sys_ts_raw > 0 else None
-            sys_ts_iso = datetime.fromtimestamp(sys_ts_epoch, timezone.utc).isoformat() if sys_ts_epoch else None
-
-            result.update({
-                "operator_location_type": op_loc_type,
-                "operator_location_type_name": OPERATOR_LOCATION_TYPE_NAMES.get(op_loc_type, "Reserved"),
-                "classification_type": class_type,
-                "classification_type_name": CLASSIFICATION_TYPE_NAMES.get(class_type, f"Reserved ({class_type})"),
-                "pilot_lat": pilot_lat,
-                "pilot_lon": pilot_lon,
-                "area_count": area_count,
-                "area_radius_m": area_radius,
-                "area_ceiling_m": area_ceil_m,
-                "area_floor_m": area_floor_m,
-                "category_eu": category_eu,
-                "category_eu_name": EU_CATEGORY_NAMES.get(category_eu, f"Reserved ({category_eu})"),
-                "class_eu": class_eu,
-                "class_eu_name": EU_CLASS_NAMES.get(class_eu, f"Reserved ({class_eu})"),
-                "pilot_alt_m": pilot_alt_m,
-                "system_timestamp_epoch": sys_ts_epoch,
-                "system_timestamp_iso": sys_ts_iso,
-            })
-
-        elif msg_type == 0x5:  # Operator ID (Type 5)
-            op_id_type = block[1]
-            op_id = sanitize_ascii_string(block[2:22], max_len=20)
-            result.update({
-                "operator_id_type": op_id_type,
-                "operator_id_type_name": "Operator ID" if op_id_type == 0 else f"Reserved ({op_id_type})",
-                "operator_id": op_id,
-            })
-
-    except Exception as e:
-        result["parse_error"] = str(e)
-
-    return result
-
-
-def parse_astm_payload(payload: bytes) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """
-    Parse ASTM F3411 payload bytes with strict bounds and dimensions validation.
-    Hardened against:
-      - DA-01: Zero-length / malformed message packs & recursive sub-packs
-      - RDBP-02: Buffer over-read on truncated packet frames
-    Returns:
-      - results: List of decoded message dicts
-      - raw_b64_blocks: List of 25-byte base64-encoded strings (for replay_drones.py)
-    """
-    results = []
-    raw_b64_blocks = []
-    i = 0
-    total_len = len(payload)
-
-    while i < total_len:
-        if i >= total_len:
-            break
-
-        header = payload[i]
-        msg_type = (header >> 4) & 0x0F
-
-        if msg_type == 0xF:  # Message Pack
-            # Validate pack header structure: at least 3 bytes (Header, SingleMessageSize, MsgPackSize)
-            if i + 3 > total_len:
-                break
-
-            msg_size = payload[i + 1]
-            msg_count = payload[i + 2]
-
-            # ASTM F3411 Specification: msg_size MUST be 25 (0x19) and msg_count MUST be 1..9
-            if msg_size != 25 or msg_count == 0 or msg_count > 9:
-                # Malformed pack header -> terminate parsing to prevent index desynchronization
-                break
-
-            expected_pack_bytes = 3 + (msg_count * 25)
-            if i + expected_pack_bytes > total_len:
-                # Truncated pack payload -> do not process partial/corrupted pack
-                break
-
-            i += 3
-            for _ in range(msg_count):
-                chunk = payload[i : i + 25]
-                # Reject nested / recursive message packs (DA-01)
-                sub_msg_type = (chunk[0] >> 4) & 0x0F
-                if sub_msg_type != 0xF:
-                    decoded = decode_astm_message(chunk)
-                    if decoded:
-                        results.append(decoded)
-                    raw_b64_blocks.append(base64.b64encode(chunk).decode('ascii'))
-                i += 25
-
-        else:  # Single message block
-            if i + 25 <= total_len:
-                chunk = payload[i : i + 25]
-                decoded = decode_astm_message(chunk)
-                if decoded:
-                    results.append(decoded)
-                raw_b64_blocks.append(base64.b64encode(chunk).decode('ascii'))
-                i += 25
-            else:
-                # Trailing bytes < 25 bytes cannot form a valid message
-                break
-
-    return results, raw_b64_blocks
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from sniffparser import (
+    ASTM_OUI,
+    APP_CODE_RID,
+    BLE_RID_UUID,
+    OPENDRONEID_EPOCH_2019,
+    MSG_TYPE_NAMES,
+    PROTO_VERSION_NAMES,
+    ID_TYPE_NAMES,
+    UA_TYPE_NAMES,
+    STATUS_NAMES,
+    HEIGHT_TYPE_NAMES,
+    HORIZ_ACCURACY_NAMES,
+    VERT_ACCURACY_NAMES,
+    SPEED_ACCURACY_NAMES,
+    TIMESTAMP_ACCURACY_NAMES,
+    AUTH_TYPE_NAMES,
+    DESC_TYPE_NAMES,
+    OPERATOR_LOCATION_TYPE_NAMES,
+    CLASSIFICATION_TYPE_NAMES,
+    EU_CATEGORY_NAMES,
+    EU_CLASS_NAMES,
+    sanitize_ascii_string,
+    decode_astm_message,
+    parse_astm_payload,
+)
 
 
 # ============================================================================
@@ -564,11 +143,18 @@ class EncounterTracker:
     Groups individual Remote ID packets into 5-minute (300s) Flight Encounters
     and commits completed/updated encounters into an SQLite database.
     """
-    def __init__(self, db_path: Optional[str] = "rid_detections.db", timeout_s: float = 300.0):
+    def __init__(
+        self,
+        db_path: Optional[str] = "rid_detections.db",
+        timeout_s: float = 300.0,
+        persist_interval_s: float = 0.0,
+    ):
         self.db_path = db_path
         self.timeout_s = timeout_s
+        self.persist_interval_s = persist_interval_s
         self.active_encounters: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.Lock()
+        self.last_wal_checkpoint = time.time()
 
         if self.db_path:
             self._init_db()
@@ -617,7 +203,13 @@ class EncounterTracker:
         serial = packet.get("serial_number")
         ts = packet.get("timestamp", time.time())
         transport = packet.get("transport", "unknown")
-        ch_str = str(packet.get("channel", "N/A"))
+        ch_raw = packet.get("channel", "N/A")
+        if transport in ("bt4", "bt5"):
+            ch_str = f"BLE Ch {ch_raw}" if (isinstance(ch_raw, int) or (isinstance(ch_raw, str) and ch_raw.isdigit())) else str(ch_raw)
+        elif transport in ("wifi", "nan"):
+            ch_str = f"Wi-Fi Ch {ch_raw}" if (isinstance(ch_raw, int) or (isinstance(ch_raw, str) and ch_raw.isdigit())) else str(ch_raw)
+        else:
+            ch_str = str(ch_raw)
         rssi = packet.get("rssi_dbm")
 
         key = f"{mac}_{serial}" if serial else mac
@@ -661,6 +253,7 @@ class EncounterTracker:
                     "self_id_desc": None,
                     "trajectory": [],
                     "is_active": 1,
+                    "last_persisted": 0.0,
                 }
 
             enc = self.active_encounters[key]
@@ -691,7 +284,17 @@ class EncounterTracker:
                         enc["speeds"].append(spd)
                     if lat is not None and lon is not None:
                         # Append trajectory coordinate tuple [lat, lon, alt, speed, heading, ts]
-                        enc["trajectory"].append([lat, lon, alt, spd, heading, round(ts, 2)])
+                        # Downsample trajectory if stationary or dense (<1s dt and <~1m movement)
+                        last_pt = enc["trajectory"][-1] if enc["trajectory"] else None
+                        should_record = False
+                        if last_pt is None:
+                            should_record = True
+                        else:
+                            dt_pt = ts - last_pt[5]
+                            if dt_pt >= 1.0 or abs(lat - last_pt[0]) > 0.00001 or abs(lon - last_pt[1]) > 0.00001:
+                                should_record = True
+                        if should_record:
+                            enc["trajectory"].append([lat, lon, alt, spd, heading, round(ts, 2)])
 
                 elif m_type == "Basic ID":
                     if msg.get("id") and not enc.get("serial_number"):
@@ -706,15 +309,24 @@ class EncounterTracker:
                         enc["pilot_alt_m"] = msg.get("pilot_alt_m")
 
                 elif m_type == "Operator ID":
-                    if msg.get("operator_id"):
-                        enc["operator_id"] = msg.get("operator_id")
+                    op_val = msg.get("operator_id") or msg.get("id")
+                    if op_val:
+                        enc["operator_id"] = op_val
 
                 elif m_type == "Self-ID":
-                    if msg.get("description"):
-                        enc["self_id_desc"] = msg.get("description")
+                    desc_val = msg.get("description") or msg.get("desc")
+                    if desc_val:
+                        enc["self_id_desc"] = desc_val
 
-            # Persist live progress
-            self._persist_encounter(enc)
+            # Persist live progress (throttled to at most once per persist_interval_s or first packet)
+            if (
+                self.persist_interval_s <= 0.0
+                or enc["packet_count"] == 1
+                or (ts - enc.get("last_persisted", 0.0) >= self.persist_interval_s)
+            ):
+                self._persist_encounter(enc)
+                enc["last_persisted"] = ts
+
             return enc["encounter_id"]
 
     def check_timeouts(self, now: Optional[float] = None) -> List[str]:
@@ -732,6 +344,16 @@ class EncounterTracker:
                     keys_to_delete.append(key)
             for k in keys_to_delete:
                 del self.active_encounters[k]
+
+            # Periodic WAL checkpoint every 5 minutes
+            if now - self.last_wal_checkpoint > 300.0:
+                self.last_wal_checkpoint = now
+                if self.db_path:
+                    try:
+                        with sqlite3.connect(self.db_path) as conn:
+                            conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+                    except Exception:
+                        pass
         return closed_ids
 
     def finalize_all(self):
@@ -843,12 +465,43 @@ class WifiChannelHopperThread(threading.Thread):
         self.idx_2g = 0
         self.idx_5g = 0
 
-    def _set_channel(self, channel: int):
-        cmd = ["iw", "dev", self.interface, "set", "channel", str(channel)]
+    def _set_channel(self, channel: int) -> bool:
+        # Method 1: iw dev <iface> set channel <ch>
         try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        except Exception as e:
-            logger.debug(f"Error executing iw command: {e}")
+            res = subprocess.run(
+                ["iw", "dev", self.interface, "set", "channel", str(channel)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+            )
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        # Method 2: iwconfig <iface> channel <ch>
+        try:
+            res = subprocess.run(
+                ["iwconfig", self.interface, "channel", str(channel)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+            )
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        # Method 3: iw dev <iface> set freq <freq_mhz>
+        freq = get_freq_for_channel(channel)
+        if freq > 0:
+            try:
+                res = subprocess.run(
+                    ["iw", "dev", self.interface, "set", "freq", str(freq)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+                )
+                if res.returncode == 0:
+                    return True
+            except Exception:
+                pass
+
+        return False
 
     def _hop_step(self, target_channel: int, dwell_time: float, switch_delay: float):
         if not self.running:
@@ -860,9 +513,10 @@ class WifiChannelHopperThread(threading.Thread):
         if not self.running:
             return
 
-        self._set_channel(target_channel)
-        self.current_channel = target_channel
-        self.channel_state.update(target_channel)
+        success = self._set_channel(target_channel)
+        if success:
+            self.current_channel = target_channel
+            self.channel_state.update(target_channel)
         time.sleep(dwell_time)
 
     def run(self):
@@ -958,28 +612,38 @@ class WifiSnifferThread(threading.Thread):
                 ts = time.time()
                 cur_ch, cur_band, cur_freq, _ = self.channel_state.get()
 
-                # Fast check for ASTM OUI (FA:0B:BC) or NAN Action frames
-                oui_idx = frame.find(ASTM_OUI)
-                is_nan = False
+                # Fast check for ASTM OUI (FA:0B:BC) in Vendor Specific IEs (0xDD) or NAN Action frames
+                vendor_ie_idx = -1
+                search_offset = 0
+                while True:
+                    idx = frame.find(ASTM_OUI, search_offset)
+                    if idx == -1:
+                        break
+                    if idx >= 2 and frame[idx - 2] == 0xDD:
+                        vendor_ie_idx = idx
+                        break
+                    search_offset = idx + 1
 
-                if oui_idx == -1:
-                    radiotap_len = struct.unpack('<H', frame[2:4])[0] if len(frame) >= 4 else 0
-                    if len(frame) > radiotap_len + 2:
+                is_nan = False
+                radiotap_len = struct.unpack('<H', frame[2:4])[0] if (len(frame) >= 4 and frame[0] == 0x00) else 0
+
+                if vendor_ie_idx == -1:
+                    # Check for NAN Action frames (0xD0 / 0xE0)
+                    if len(frame) > radiotap_len + 24:
                         fc = frame[radiotap_len]
                         if fc in (0xD0, 0xE0):
                             for offset in range(radiotap_len + 24, min(len(frame) - 4, radiotap_len + 128)):
                                 if (frame[offset] >> 4) == 0xF and frame[offset + 1] == 0x19:
                                     is_nan = True
-                                    oui_idx = offset - 3
+                                    nan_pack_offset = offset
                                     break
                     if not is_nan:
                         continue
 
-                radiotap_len = struct.unpack('<H', frame[2:4])[0] if len(frame) >= 4 else 0
                 if len(frame) < radiotap_len + 24:
                     continue
 
-                # Extract MAC Address (addr2 / transmitter address)
+                # Extract MAC Address (addr2 / transmitter address at offset radiotap_len + 10)
                 mac_bytes = frame[radiotap_len + 10 : radiotap_len + 16]
                 mac_addr = ':'.join(f'{b:02X}' for b in mac_bytes)
 
@@ -1001,28 +665,19 @@ class WifiSnifferThread(threading.Thread):
                 counter = 0
                 if is_nan:
                     transport = "nan"
-                    nan_body = frame[radiotap_len + 24:]
-                    pack_idx = -1
-                    for k in range(len(nan_body) - 3):
-                        if (nan_body[k] >> 4) == 0xF and nan_body[k+1] == 0x19:
-                            pack_idx = k
-                            break
-                    if pack_idx != -1:
-                        astm_payload = nan_body[pack_idx:]
-                    else:
-                        continue
+                    astm_payload = frame[nan_pack_offset:]
                 else:
                     transport = "wifi"
-                    if oui_idx < 2 or frame[oui_idx - 2] != 0xDD:
+                    ie_len = frame[vendor_ie_idx - 1]
+                    if vendor_ie_idx + ie_len > len(frame):
                         continue
-                    ie_len = frame[oui_idx - 1]
-                    if oui_idx + ie_len - 1 > len(frame):
-                        continue
-                    vendor_data = frame[oui_idx + 3 : oui_idx - 1 + ie_len]
-                    if len(vendor_data) < 2 or vendor_data[0] != APP_CODE_RID:
-                        continue
-                    counter = vendor_data[1] if len(vendor_data) > 1 else 0
-                    astm_payload = vendor_data[2:]
+                    vendor_data = frame[vendor_ie_idx + 3 : vendor_ie_idx + ie_len]
+                    if len(vendor_data) >= 2 and vendor_data[0] == APP_CODE_RID:
+                        counter = vendor_data[1]
+                        astm_payload = vendor_data[2:]
+                    else:
+                        counter = 0
+                        astm_payload = vendor_data
 
                 # Decode ASTM Messages and raw 25-byte blocks
                 parsed_messages, messages_b64 = parse_astm_payload(astm_payload)
@@ -1097,10 +752,7 @@ class BleNrfSnifferThread(threading.Thread):
 
     def run(self):
         self.running = True
-        logger.info("[*] Starting BLE nRF Sniffer subprocess via nrf_bt_sniffer_json.py...")
-
-        subprocess.run(["killall", "-9", "nrfutil", "nrfutil-ble-sniffer", "nrfutil-ble-sni"], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-        time.sleep(0.3)
+        logger.info("[*] Starting BLE nRF Sniffer worker thread...")
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         candidate_paths = [
@@ -1110,89 +762,153 @@ class BleNrfSnifferThread(threading.Thread):
         ]
         nrf_script = next((p for p in candidate_paths if os.path.exists(p)), candidate_paths[0])
 
-        cmd = [sys.executable, nrf_script, "--only-rid"]
-        if self.nrf_port:
-            cmd.extend(["--nrf-port", self.nrf_port])
-        elif self.rx_pcap and os.path.exists(self.rx_pcap):
-            cmd.extend(["--rx-pcap", self.rx_pcap])
+        while self.running:
+            # 1. Detect or verify UART serial port if live
+            active_port = self.nrf_port
+            if not active_port and not self.rx_pcap:
+                for candidate in ["/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyACM2", "/dev/ttyUSB0", "/dev/ttyUSB1"]:
+                    if os.path.exists(candidate):
+                        active_port = candidate
+                        break
 
-        if self.coded:
-            cmd.append("--coded")
-        if self.ble_mode in ("ble5", "extended", "pure_bt5", "bt5"):
-            cmd.append("-b")
+            if not active_port and not self.rx_pcap:
+                logger.warning("[!] No nRF BLE sniffer device found on /dev/ttyACM* or /dev/ttyUSB*. Retrying in 3s...")
+                time.sleep(3.0)
+                continue
 
-        try:
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=sys.stderr, text=True, start_new_session=True)
-            logger.info("[*] BLE nRF Sniffer process active.")
+            # Kill any lingering nrfutil / sniffer instances
+            subprocess.run(["killall", "-9", "nrfutil", "nrfutil-ble-sniffer", "nrfutil-ble-sni"],
+                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            time.sleep(0.3)
 
-            while self.running and self.proc.poll() is None:
-                line = self.proc.stdout.readline()
-                if not line:
-                    continue
+            cmd = [sys.executable, nrf_script, "--only-rid"]
+            if active_port:
+                cmd.extend(["--nrf-port", active_port])
+            elif self.rx_pcap and os.path.exists(self.rx_pcap):
+                cmd.extend(["--rx-pcap", self.rx_pcap])
 
-                line_str = line.strip()
-                if not line_str.startswith("{"):
-                    continue
+            if self.coded or self.ble_mode in ("ble5", "extended", "pure_bt5", "bt5"):
+                cmd.append("--coded")
+            if self.ble_mode in ("ble5", "extended", "pure_bt5", "bt5"):
+                cmd.append("-b")
 
-                try:
-                    record = json.loads(line_str)
-                    mac = record.get("mac")
-                    ts = record.get("timestamp", time.time())
-                    rid_info = record.get("remote_id")
+            try:
+                self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=sys.stderr, text=True, start_new_session=True)
+                port_desc = active_port if active_port else self.rx_pcap
+                logger.info(f"[*] BLE nRF Sniffer process active on {port_desc}.")
 
-                    if not mac or mac == "UNKNOWN" or not rid_info:
+                while self.running and self.proc.poll() is None:
+                    line = self.proc.stdout.readline()
+                    if not line:
                         continue
 
-                    parsed_msgs = rid_info.get("parsed_messages", [])
-                    raw_hex = record.get("raw_hex", "")
-                    transport_type = rid_info.get("transport", "ble4")
-                    transport = "bt5" if transport_type in ("bt5", "ble5", "extended") else "bt4"
+                    line_str = line.strip()
+                    if not line_str.startswith("{"):
+                        continue
 
-                    # Generate messages_b64 from parsed message hex blocks or raw
-                    messages_b64 = []
-                    for msg in parsed_msgs:
-                        if isinstance(msg, dict) and "raw_hex" in msg:
-                            raw_b = bytes.fromhex(msg["raw_hex"])
-                            messages_b64.append(base64.b64encode(raw_b[:25]).decode('ascii'))
+                    try:
+                        record = json.loads(line_str)
+                        mac = record.get("mac")
+                        ts = record.get("timestamp", time.time())
+                        rid_info = record.get("remote_id")
 
-                    serial_no = None
-                    for msg in parsed_msgs:
-                        if isinstance(msg, dict) and msg.get("type") == "Basic ID" and msg.get("id"):
-                            serial_no = msg["id"]
-                            break
+                        if not mac or mac == "UNKNOWN" or not rid_info:
+                            continue
 
-                    counter = rid_info.get("counter", 0)
+                        parsed_msgs = rid_info.get("parsed_messages", [])
+                        raw_hex = record.get("raw_hex", "")
+                        transport_type = str(rid_info.get("transport", "bt5")).lower()
+                        pdu_type = str(record.get("pdu_type", "")).upper()
+                        if (
+                            "5" in transport_type
+                            or "ext" in transport_type
+                            or "AUX" in pdu_type
+                            or "EXT" in pdu_type
+                            or self.ble_mode in ("ble5", "extended", "pure_bt5", "bt5")
+                        ):
+                            transport = "bt5"
+                        else:
+                            transport = "bt4"
 
-                    event: Dict[str, Any] = {
-                        "timestamp": ts,
-                        "timestamp_iso": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
-                        "transport": transport,
-                        "interface": "nRF52840-UART",
-                        "channel": "Adv (37/38/39)",
-                        "band": "2.4GHz",
-                        "frequency_mhz": 2402,
-                        "counter": counter,
-                        "mac": mac.upper(),
-                        "rssi_dbm": record.get("rssi_dbm"),
-                        "serial_number": serial_no,
-                        "messages": parsed_msgs,
-                        "messages_b64": messages_b64,
-                        "raw_length": record.get("raw_length", 0),
-                        "pdu_type": record.get("pdu_type"),
-                    }
+                        # If parsed_msgs is empty or missing fields, try parsing raw_hex if available
+                        if not parsed_msgs and raw_hex:
+                            try:
+                                raw_bytes = bytes.fromhex(raw_hex)
+                                uuid_idx = raw_bytes.find(BLE_RID_UUID)
+                                if uuid_idx != -1:
+                                    astm_p = raw_bytes[uuid_idx + 2:]
+                                    if len(astm_p) >= 2 and astm_p[0] == 0x0D:
+                                        astm_p = astm_p[2:]
+                                    parsed_msgs, _ = parse_astm_payload(astm_p)
+                            except Exception:
+                                pass
 
-                    self.event_queue.put(event)
+                        # Generate messages_b64 from parsed message hex blocks or raw
+                        messages_b64 = []
+                        for msg in parsed_msgs:
+                            if isinstance(msg, dict) and "raw_hex" in msg:
+                                raw_b = bytes.fromhex(msg["raw_hex"])
+                                messages_b64.append(base64.b64encode(raw_b[:25]).decode('ascii'))
 
-                except Exception as e:
-                    logger.debug(f"Error parsing BLE JSON record: {e}")
+                        serial_no = None
+                        for msg in parsed_msgs:
+                            if isinstance(msg, dict) and msg.get("type") == "Basic ID" and msg.get("id"):
+                                serial_no = msg["id"]
+                                break
 
-        except Exception as e:
-            if self.running:
-                logger.error(f"[-] Failed to run nrf_bt_sniffer_json.py: {e}")
-        finally:
-            self.stop_process()
-            self.running = False
-            logger.info("[*] BLE nRF Sniffer stopped.")
+                        counter = rid_info.get("counter", 0)
+
+                        rf_ch = record.get("rf_channel")
+                        ch_str = f"Ch {rf_ch}" if rf_ch is not None else "Adv (37/38/39)"
+                        freq_mhz = 2402
+                        if rf_ch == 37:
+                            freq_mhz = 2402
+                        elif rf_ch == 38:
+                            freq_mhz = 2426
+                        elif rf_ch == 39:
+                            freq_mhz = 2480
+                        elif rf_ch is not None and 0 <= rf_ch <= 36:
+                            freq_mhz = 2404 + 2 * rf_ch
+
+                        event: Dict[str, Any] = {
+                            "timestamp": ts,
+                            "timestamp_iso": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+                            "transport": transport,
+                            "interface": "nRF52840-UART",
+                            "channel": ch_str,
+                            "band": "2.4GHz",
+                            "frequency_mhz": freq_mhz,
+                            "counter": counter,
+                            "mac": mac.upper(),
+                            "rssi_dbm": record.get("rssi_dbm"),
+                            "serial_number": serial_no,
+                            "messages": parsed_msgs,
+                            "messages_b64": messages_b64,
+                            "raw_length": record.get("raw_length", 0),
+                            "pdu_type": record.get("pdu_type"),
+                        }
+
+                        self.event_queue.put(event)
+
+                    except Exception as e:
+                        logger.debug(f"Error parsing BLE JSON record: {e}")
+
+            except Exception as e:
+                if self.running:
+                    logger.error(f"[-] Error running nrf_bt_sniffer_json.py: {e}")
+            finally:
+                self.stop_process()
+
+            # If offline PCAP mode, stop after completion
+            if self.rx_pcap or not self.running:
+                break
+
+            # If live sniffing and process ended unexpectedly, wait and retry
+            logger.warning("[!] BLE nRF sniffer disconnected or exited. Reconnecting in 2.0s...")
+            time.sleep(2.0)
+
+        self.running = False
+        logger.info("[*] BLE nRF Sniffer worker stopped.")
 
     def stop_process(self):
         if self.proc and self.proc.poll() is None:
@@ -1219,29 +935,71 @@ class BleNrfSnifferThread(threading.Thread):
 class UnifiedTelemetryLogger:
     """
     Consumes parsed RID events and manages:
-    1. Colorized live console display.
-    2. Append-only replay-compatible JSONL log.
-    3. SQLite 5-minute flight encounter grouping & persistence.
+    1. Colorized live console display (or periodic quiet heartbeat in daemon mode).
+    2. Append-only replay-compatible JSONL log with optional daily date splitting.
+    3. SQLite 5-minute flight encounter grouping & throttled persistence with WAL checkpointing.
     """
     def __init__(
         self,
         log_jsonl_path: Optional[str] = None,
         db_path: Optional[str] = "rid_detections.db",
-        encounter_timeout_s: float = 300.0
+        encounter_timeout_s: float = 300.0,
+        quiet: bool = False,
+        rotate_daily: bool = False,
+        persist_interval_s: float = 2.0,
     ):
-        self.log_file_handle = open(log_jsonl_path, "a") if log_jsonl_path else None
-        self.encounter_tracker = EncounterTracker(db_path=db_path, timeout_s=encounter_timeout_s) if db_path else None
+        self.base_log_path = log_jsonl_path
+        self.rotate_daily = rotate_daily
+        self.quiet = quiet
+        self.current_log_path: Optional[str] = None
+        self.log_file_handle = None
+
+        self.encounter_tracker = EncounterTracker(
+            db_path=db_path,
+            timeout_s=encounter_timeout_s,
+            persist_interval_s=persist_interval_s
+        ) if db_path else None
+
         self.stats = {
             "total_packets": 0,
             "transports": {"bt4": 0, "bt5": 0, "wifi": 0, "nan": 0},
             "macs": set(),
             "serials": set(),
-            "channels": {},
+            "wifi_channels": {},
+            "ble_channels": {},
         }
         self.mac_to_serial: Dict[str, str] = {}
         self.start_time = time.time()
         self.first_packet_time: Optional[float] = None
         self.last_timeout_check = time.time()
+        self.last_heartbeat = time.time()
+
+    def _ensure_log_handle(self, now: float):
+        if not self.base_log_path:
+            return None
+
+        if self.rotate_daily:
+            dt_str = datetime.fromtimestamp(now, timezone.utc).strftime("%Y%m%d")
+            root, ext = os.path.splitext(self.base_log_path)
+            target = f"{root}_{dt_str}{ext or '.jsonl'}"
+        else:
+            target = self.base_log_path
+
+        if target != self.current_log_path or self.log_file_handle is None:
+            if self.log_file_handle:
+                try:
+                    self.log_file_handle.close()
+                except Exception:
+                    pass
+            parent_dir = os.path.dirname(os.path.abspath(target))
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            self.current_log_path = target
+            self.log_file_handle = open(target, "a")
+            if not self.quiet:
+                logger.info(f"[*] Replay telemetry logging to {target}")
+
+        return self.log_file_handle
 
     def process_event(self, event: Dict[str, Any]):
         now = time.time()
@@ -1266,8 +1024,13 @@ class UnifiedTelemetryLogger:
             serial = self.mac_to_serial[mac]
             event["serial_number"] = serial
 
-        ch_str = str(event.get("channel", "N/A"))
-        self.stats["channels"][ch_str] = self.stats["channels"].get(ch_str, 0) + 1
+        ch_raw = event.get("channel")
+        if t_key in ("bt4", "bt5"):
+            ch_key = f"Ch {ch_raw}" if (isinstance(ch_raw, int) or (isinstance(ch_raw, str) and ch_raw.isdigit())) else str(ch_raw or "Adv")
+            self.stats["ble_channels"][ch_key] = self.stats["ble_channels"].get(ch_key, 0) + 1
+        elif t_key in ("wifi", "nan"):
+            ch_key = str(ch_raw) if ch_raw is not None else "N/A"
+            self.stats["wifi_channels"][ch_key] = self.stats["wifi_channels"].get(ch_key, 0) + 1
 
         # 1. Update SQLite 5-minute Encounter Tracker
         encounter_id = None
@@ -1282,7 +1045,9 @@ class UnifiedTelemetryLogger:
                 self.last_timeout_check = now
 
         # 2. Write to Replay-Compatible JSONL
-        if self.log_file_handle:
+        ev_ts = event.get("timestamp", now)
+        handle = self._ensure_log_handle(ev_ts)
+        if handle:
             replay_record = {
                 "time_offset_ms": time_offset_ms,
                 "transport": t_key,
@@ -1295,8 +1060,20 @@ class UnifiedTelemetryLogger:
                 "timestamp_iso": event.get("timestamp_iso"),
                 "encounter_id": encounter_id,
             }
-            self.log_file_handle.write(json.dumps(replay_record) + "\n")
-            self.log_file_handle.flush()
+            handle.write(json.dumps(replay_record) + "\n")
+            handle.flush()
+
+        # In quiet mode, emit periodic heartbeat every 30s instead of per-packet verbose banner
+        if self.quiet:
+            if now - self.last_heartbeat >= 30.0:
+                self.last_heartbeat = now
+                iso_str = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                active_cnt = len(self.encounter_tracker.active_encounters) if self.encounter_tracker else 0
+                bt_cnt = self.stats["transports"].get("bt5", 0) + self.stats["transports"].get("bt4", 0)
+                wifi_cnt = self.stats["transports"].get("wifi", 0) + self.stats["transports"].get("nan", 0)
+                print(f"[STATUS {iso_str}] Total: {self.stats['total_packets']} pkts (BLE: {bt_cnt}, Wi-Fi: {wifi_cnt}) | Active Encounters: {active_cnt} | Unique Drones: {len(self.stats['macs'])}")
+                sys.stdout.flush()
+            return
 
         # 3. Format Live Console Banner
         transport_badges = {
@@ -1311,7 +1088,10 @@ class UnifiedTelemetryLogger:
         rssi_str = f"{rssi_val:+d} dBm" if rssi_val is not None else "Unknown RSSI"
 
         band_str = event.get("band", "")
-        ch_display = f"Ch {ch_str}" if ch_str != "N/A" else ""
+        if t_key in ("bt4", "bt5"):
+            ch_display = f"BLE {ch_raw}" if ch_raw and not str(ch_raw).startswith("BLE") else str(ch_raw or "Adv")
+        else:
+            ch_display = f"Ch {ch_raw}" if ch_raw and not str(ch_raw).startswith("Ch") else str(ch_raw or "")
         rf_info = f"{band_str} {ch_display}".strip()
 
         dt_str = datetime.fromtimestamp(event.get("timestamp", now)).strftime("%H:%M:%S.%f")[:-3]
@@ -1393,14 +1173,16 @@ class UnifiedTelemetryLogger:
                 print(f"   {C_MAGENTA}🎮 System    {C_RESET}{ver_tag} -> {' | '.join(sys_parts)}")
 
             elif m_type == "Operator ID":
-                op_id = msg.get("operator_id")
+                op_id = msg.get("operator_id") or msg.get("id")
+                op_id_display = op_id if op_id else "None / Unset"
                 op_id_type = msg.get("operator_id_type_name", "Operator ID")
-                print(f"   {C_WHITE}👤 Operator  {C_RESET}{ver_tag} -> {op_id_type}: {op_id}")
+                print(f"   {C_WHITE}👤 Operator  {C_RESET}{ver_tag} -> {op_id_type}: {op_id_display}")
 
             elif m_type == "Self-ID":
-                desc = msg.get("description")
-                desc_type = msg.get("desc_type_name", "Text")
-                print(f"   {C_WHITE}📝 Self-ID   {C_RESET}{ver_tag} -> [{desc_type}] \"{desc}\"")
+                desc = msg.get("description") or msg.get("desc")
+                desc_display = desc if desc else "None / Unset"
+                desc_type = msg.get("desc_type_name", "Text Description")
+                print(f"   {C_WHITE}📝 Self-ID   {C_RESET}{ver_tag} -> [{desc_type}] \"{desc_display}\"")
 
             elif m_type == "Auth":
                 auth_type_name = msg.get("auth_type_name", "Auth")
@@ -1418,7 +1200,11 @@ class UnifiedTelemetryLogger:
         if self.encounter_tracker:
             self.encounter_tracker.finalize_all()
         if self.log_file_handle:
-            self.log_file_handle.close()
+            try:
+                self.log_file_handle.close()
+            except Exception:
+                pass
+            self.log_file_handle = None
 
     def print_summary(self):
         duration = time.time() - self.start_time
@@ -1431,9 +1217,22 @@ class UnifiedTelemetryLogger:
         print(f"  • Physical Transport Breakdown:")
         for t_name, count in self.stats["transports"].items():
             print(f"      - {t_name:<12}: {count}")
-        print(f"  • Wi-Fi / BLE Channels Active:")
-        for ch, count in sorted(self.stats["channels"].items()):
-            print(f"      - Channel {ch:<8}: {count} packets")
+
+        if self.stats["wifi_channels"]:
+            print(f"  • Wi-Fi Channels Active (2.4GHz / 5.8GHz):")
+            def _wifi_sort_key(c):
+                try:
+                    return (0, int(c))
+                except ValueError:
+                    return (1, str(c))
+            for ch in sorted(self.stats["wifi_channels"].keys(), key=_wifi_sort_key):
+                print(f"      - Channel {ch:<8}: {self.stats['wifi_channels'][ch]} packets")
+
+        if self.stats["ble_channels"]:
+            print(f"  • Bluetooth LE Channels Active:")
+            for ch in sorted(self.stats["ble_channels"].keys()):
+                print(f"      - {ch:<16}: {self.stats['ble_channels'][ch]} packets")
+
         print(f"{C_BOLD}{'='*60}{C_RESET}\n")
 
 
@@ -1442,9 +1241,16 @@ class UnifiedTelemetryLogger:
 # ============================================================================
 
 def setup_monitor_mode(interface: str, initial_channel: int = 6):
-    """Put interface into monitor mode and bring it up."""
+    """Put interface into monitor mode, unmanage from NetworkManager, and bring it up."""
     logger.info(f"[*] Configuring {interface} into monitor mode...")
     try:
+        # Attempt to unmanage from NetworkManager to prevent channel hopping interference
+        try:
+            subprocess.run(["nmcli", "dev", "set", interface, "managed", "no"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except Exception:
+            pass
+
         subprocess.run(["ip", "link", "set", interface, "down"], check=True)
         subprocess.run(["iw", "dev", interface, "set", "type", "monitor"], check=True)
         subprocess.run(["ip", "link", "set", interface, "up"], check=True)
@@ -1486,6 +1292,10 @@ def main():
     parser.add_argument("--no-wifi-setup", action="store_true", help="Skip bringing Wi-Fi interface down/up into monitor mode")
 
     # Hopping Schedule Configuration
+    parser.add_argument("--wifi-channel", "--channel", "-c", type=int, default=None,
+                        help="Lock Wi-Fi sniffer to a single fixed channel (e.g. 6 or 149) and disable hopping")
+    parser.add_argument("--no-hop", action="store_true",
+                        help="Disable Wi-Fi channel hopping (listen only on initial channel)")
     parser.add_argument("--non-social-ratio", "-k", type=int, default=1,
                         help="Non-social channel ratio multiplier k (cycles 2k non-social on 2.4GHz for every k on 5.8GHz)")
     parser.add_argument("--social-dwell-ms", type=int, default=1000, help="Social channel dwell time in milliseconds (1 Hz)")
@@ -1495,12 +1305,15 @@ def main():
 
     # BLE Options
     parser.add_argument("--coded", action="store_true", help="Enable Bluetooth 5 Long Range (LE Coded PHY) scanning")
-    parser.add_argument("--ble-mode", choices=["all", "legacy", "extended"], default="all", help="BLE advertisement filter mode")
+    parser.add_argument("--ble-mode", choices=["all", "legacy", "extended"], default="extended", help="BLE advertisement filter mode (default: extended)")
 
     # Storage & Logging
     parser.add_argument("--db-file", default="rid_detections.db", help="SQLite database path for 5-minute flight encounter records (set empty '' to disable)")
     parser.add_argument("--encounter-timeout-s", type=float, default=300.0, help="Flight encounter timeout in seconds (default 300s / 5 minutes)")
+    parser.add_argument("--persist-interval", type=float, default=2.0, help="Maximum frequency in seconds to persist active encounters to SQLite (default: 2.0s)")
     parser.add_argument("--log-jsonl", default=None, help="Optional replay-compatible JSONL log file path")
+    parser.add_argument("--rotate-daily", action="store_true", help="Automatically split JSONL log file daily (<name>_YYYYMMDD.jsonl)")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Quiet / daemon mode: suppress per-packet console banner and print periodic heartbeat status")
 
     args = parser.parse_args()
 
@@ -1515,12 +1328,17 @@ def main():
     if os.geteuid() != 0 and not args.no_wifi:
         logger.warning("[!] Warning: Root privileges (sudo) are recommended for Wi-Fi monitor mode and raw socket capture.")
 
+    initial_wifi_ch = args.wifi_channel if args.wifi_channel is not None else SOCIAL_CHANNEL_2G
+
     event_queue: queue.Queue = queue.Queue()
-    channel_state = SharedChannelState(initial_channel=SOCIAL_CHANNEL_2G)
+    channel_state = SharedChannelState(initial_channel=initial_wifi_ch)
     logger_worker = UnifiedTelemetryLogger(
         log_jsonl_path=args.log_jsonl,
         db_path=args.db_file if args.db_file else None,
-        encounter_timeout_s=args.encounter_timeout_s
+        encounter_timeout_s=args.encounter_timeout_s,
+        quiet=args.quiet,
+        rotate_daily=args.rotate_daily,
+        persist_interval_s=args.persist_interval,
     )
 
     threads: List[threading.Thread] = []
@@ -1531,31 +1349,43 @@ def main():
     # Setup Wi-Fi
     if not args.no_wifi:
         if not args.no_wifi_setup:
-            setup_monitor_mode(args.wifi_iface, initial_channel=SOCIAL_CHANNEL_2G)
+            setup_monitor_mode(args.wifi_iface, initial_channel=initial_wifi_ch)
 
-        hopper_thread = WifiChannelHopperThread(
-            interface=args.wifi_iface,
-            channel_state=channel_state,
-            non_social_ratio_k=args.non_social_ratio,
-            social_dwell_ms=args.social_dwell_ms,
-            non_social_dwell_ms=args.non_social_dwell_ms,
-            intraband_delay_ms=args.intraband_delay_ms,
-            interband_delay_ms=args.interband_delay_ms,
-        )
+        if not args.no_hop and args.wifi_channel is None:
+            hopper_thread = WifiChannelHopperThread(
+                interface=args.wifi_iface,
+                channel_state=channel_state,
+                non_social_ratio_k=args.non_social_ratio,
+                social_dwell_ms=args.social_dwell_ms,
+                non_social_dwell_ms=args.non_social_dwell_ms,
+                intraband_delay_ms=args.intraband_delay_ms,
+                interband_delay_ms=args.interband_delay_ms,
+            )
+            threads.append(hopper_thread)
+        else:
+            logger.info(f"[*] Wi-Fi sniffer locked to fixed Channel {initial_wifi_ch} (hopping disabled).")
+
         wifi_thread = WifiSnifferThread(
             interface=args.wifi_iface,
             channel_state=channel_state,
             event_queue=event_queue,
         )
-        threads.extend([hopper_thread, wifi_thread])
+        threads.append(wifi_thread)
 
     # Setup BLE
     if not args.no_ble:
+        nrf_port = args.nrf_port
+        if not nrf_port and not args.rx_pcap:
+            for candidate in ["/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0"]:
+                if os.path.exists(candidate):
+                    nrf_port = candidate
+                    logger.info(f"[*] Auto-detected nRF BLE sniffer on {candidate}")
+                    break
         ble_thread = BleNrfSnifferThread(
             event_queue=event_queue,
-            nrf_port=args.nrf_port,
+            nrf_port=nrf_port,
             rx_pcap=args.rx_pcap,
-            coded=args.coded,
+            coded=args.coded or (args.ble_mode in ("ble5", "extended", "pure_bt5", "bt5")),
             ble_mode=args.ble_mode,
         )
         threads.append(ble_thread)

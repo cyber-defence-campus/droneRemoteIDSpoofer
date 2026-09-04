@@ -145,7 +145,7 @@ class TestDatabaseAndReplayLogging(unittest.TestCase):
             "rssi_dbm": -60,
             "serial_number": "TESTDRONE123",
             "messages": [
-                {"type": "Basic ID", "id": "TESTDRONE123", "raw_hex": "02125445535444524F4E4531323300000000000000"}
+                decode_astm_message(bytes.fromhex("02125445535444524F4E45313233000000000000000000000000000000"))
             ],
             "messages_b64": [
                 "AhJTcG9vZmVkX1NlcmlhbF80ODkyMQAAAA=="
@@ -199,6 +199,87 @@ class TestDatabaseAndReplayLogging(unittest.TestCase):
         line_coords = [[pt[1], pt[0], pt[2] if pt[2] is not None else 0.0] for pt in traj]
         self.assertEqual(line_coords[0], [8.5417, 47.3769, 450.0])
 
+    def test_daily_rotation_jsonl_output(self):
+        base_log = os.path.join(self.temp_dir.name, "daily_capture.jsonl")
+        logger = UnifiedTelemetryLogger(
+            log_jsonl_path=base_log,
+            db_path=self.db_path,
+            rotate_daily=True,
+            quiet=True,
+        )
+
+        t0 = 1756129000.0  # 2025-08-25
+        pkt = {
+            "timestamp": t0,
+            "transport": "bt5",
+            "channel": "Adv",
+            "counter": 1,
+            "mac": "AA:BB:CC:DD:EE:01",
+            "rssi_dbm": -60,
+            "serial_number": "DAILY_DRONE",
+            "messages": [],
+            "messages_b64": [],
+        }
+
+        logger.process_event(pkt)
+        logger.close()
+
+        # Target file should have date suffix format: daily_capture_YYYYMMDD.jsonl
+        expected_date = "19700101"  # or matching t0 UTC
+        from datetime import datetime, timezone
+        expected_suffix = datetime.fromtimestamp(t0, timezone.utc).strftime("%Y%m%d")
+        expected_path = os.path.join(self.temp_dir.name, f"daily_capture_{expected_suffix}.jsonl")
+
+        self.assertTrue(os.path.exists(expected_path))
+        with open(expected_path, "r") as f:
+            lines = f.readlines()
+            self.assertEqual(len(lines), 1)
+            rec = json.loads(lines[0])
+            self.assertEqual(rec["mac"], "AA:BB:CC:DD:EE:01")
+
+    def test_persistence_throttling(self):
+        # Initialize tracker with 2.0s persist interval
+        tracker = EncounterTracker(db_path=self.db_path, timeout_s=300.0, persist_interval_s=2.0)
+        t0 = 1756129000.0
+        pkt1 = {
+            "timestamp": t0,
+            "mac": "22:22:22:22:22:22",
+            "serial_number": "THROTTLE_DRONE",
+            "transport": "wifi",
+            "channel": 6,
+            "rssi_dbm": -50,
+            "messages": [{"type": "Location", "lat": 47.0, "lon": 8.0, "geodetic_altitude_m": 100.0}]
+        }
+        enc_id = tracker.update_with_packet(pkt1)
+
+        # First packet is always persisted
+        with sqlite3.connect(self.db_path) as conn:
+            cnt = conn.execute("SELECT packet_count FROM encounters WHERE encounter_id = ?", (enc_id,)).fetchone()[0]
+            self.assertEqual(cnt, 1)
+
+        # Second packet 0.5s later (within 2.0s threshold) should update memory but skip DB write
+        pkt2 = {
+            "timestamp": t0 + 0.5,
+            "mac": "22:22:22:22:22:22",
+            "serial_number": "THROTTLE_DRONE",
+            "transport": "wifi",
+            "channel": 6,
+            "rssi_dbm": -50,
+            "messages": [{"type": "Location", "lat": 47.0, "lon": 8.0, "geodetic_altitude_m": 100.0}]
+        }
+        tracker.update_with_packet(pkt2)
+
+        with sqlite3.connect(self.db_path) as conn:
+            cnt = conn.execute("SELECT packet_count FROM encounters WHERE encounter_id = ?", (enc_id,)).fetchone()[0]
+            self.assertEqual(cnt, 1)  # Still 1 in DB due to throttling
+
+        # Finalize all forces flush
+        tracker.finalize_all()
+        with sqlite3.connect(self.db_path) as conn:
+            cnt = conn.execute("SELECT packet_count FROM encounters WHERE encounter_id = ?", (enc_id,)).fetchone()[0]
+            self.assertEqual(cnt, 2)  # Updated to 2 on finalize
+
 
 if __name__ == "__main__":
     unittest.main()
+

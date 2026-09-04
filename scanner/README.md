@@ -156,34 +156,54 @@ sudo python3 scanner/combined_rid_listener.py \
     --db-file rid_wifi_only.db
 ```
 
-### 3. BLE Only with Coded PHY (Long Range)
+### 3. BLE 5 Extended Mode (Default BLE Behavior)
 ```bash
 python3 scanner/combined_rid_listener.py \
     --no-wifi \
-    --nrf-port /dev/ttyACM0 \
-    --coded \
-    --db-file rid_ble_only.db
+    --db-file rid_ble5_only.db
+```
+*(BLE 5 Extended Advertising and LE Coded PHY tracking are active by default. Port `/dev/ttyACM0` is auto-detected.)*
+
+### 4. Running as a 24/7 Background Service (systemd)
+The scanner includes a dedicated systemd service template [`scanner/drone-scanner.service`](file:///home/davidalexander/ETH/droneID_thesis/droneRemoteIDSpoofer/scanner/drone-scanner.service) configured for autonomous, indefinite operation:
+
+```bash
+# 1. Copy service file to systemd directory
+sudo cp scanner/drone-scanner.service /etc/systemd/system/
+
+# 2. Reload daemon and start service
+sudo systemctl daemon-reload
+sudo systemctl enable --now drone-scanner.service
+
+# 3. View live heartbeat and status
+sudo systemctl status drone-scanner.service
+sudo journalctl -u drone-scanner.service -f
 ```
 
 ### CLI Arguments Reference
 
 | Argument | Default | Description |
 | :--- | :--- | :--- |
-| `--wifi-iface`, `-i` | `None` | Wi-Fi monitor-mode interface (e.g. `wlan1`) |
-| `--nrf-port`, `-p` | `None` (auto) | nRF Sniffer UART port (e.g. `/dev/ttyACM0`) |
+| `--wifi-iface`, `-i` | `None` | Wi-Fi monitor-mode interface (e.g. `wlx00c0cabd0a22` or `wlan1`) |
+| `--nrf-port`, `-p` | `None` (auto) | nRF Sniffer UART port (e.g. `/dev/ttyACM0`). Auto-reconnects on USB disconnect. |
 | `--no-wifi` | `False` | Disable Wi-Fi sniffing and channel hopping |
 | `--no-ble` | `False` | Disable Bluetooth sniffing |
 | `--no-wifi-setup` | `False` | Skip bringing Wi-Fi interface down/up into monitor mode |
+| `--wifi-channel`, `-c` | `None` | Lock Wi-Fi sniffer to a single fixed channel (e.g. 6 or 149) |
+| `--no-hop` | `False` | Disable Wi-Fi channel hopping (listen on initial channel) |
 | `--non-social-ratio`, `-k` | `1` | Ratio multiplier ($2k$ non-social on 2.4 GHz per $k$ on 5.8 GHz) |
 | `--social-dwell-ms` | `1000` | Social channel dwell time in milliseconds (1 Hz) |
 | `--non-social-dwell-ms` | `200` | Non-social channel dwell time in milliseconds (5 Hz) |
 | `--intraband-delay-ms` | `30` | Intraband switching delay in milliseconds |
 | `--interband-delay-ms` | `50` | Interband switching delay in milliseconds |
 | `--coded` | `False` | Enable BLE 5 Long Range (LE Coded PHY) scanning |
-| `--ble-mode` | `all` | Filter BLE advertisements: `all`, `legacy`, `extended` |
+| `--ble-mode` | `extended` | Filter BLE advertisements: `extended` (BLE 5 Extended Advertising), `legacy` (BLE 4), `all` |
 | `--db-file` | `rid_detections.db` | SQLite database path for flight encounters (`''` to disable) |
 | `--encounter-timeout-s` | `300.0` | Inactivity timeout in seconds before closing an encounter (5 min) |
+| `--persist-interval` | `2.0` | Max frequency in seconds to persist active encounters to SQLite |
 | `--log-jsonl` | `None` | Optional output JSONL replay file path |
+| `--rotate-daily` | `False` | Automatically split JSONL log file daily (`<path>_YYYYMMDD.jsonl`) |
+| `--quiet`, `-q` | `False` | Quiet mode: suppress per-packet terminal banner and print 30s status heartbeat |
 
 ---
 

@@ -1,0 +1,54 @@
+# ==============================================================================
+# Drone Remote ID Combined Scanner - Autonomous systemd Service Unit
+# ==============================================================================
+#
+# Installation Instructions:
+# 1. Copy or link this service file to /etc/systemd/system/:
+#      sudo cp scanner/drone-scanner.service /etc/systemd/system/
+#
+# 2. (Optional) Adjust the WorkingDirectory and ExecStart paths below if the
+#    repo is located at a different path on the target machine (e.g. /home/user/droneRemoteIDSpoofer).
+#
+# 3. Reload systemd daemon and enable service at boot:
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now drone-scanner.service
+#
+# 4. Check status & live logs:
+#      sudo systemctl status drone-scanner.service
+#      sudo journalctl -u drone-scanner.service -f
+# ==============================================================================
+
+[Unit]
+Description=Autonomous ASTM F3411 Drone Remote ID Combined Scanner (Wi-Fi + BLE)
+Documentation=https://github.com/cyber-defence-campus/droneRemoteIDSpoofer
+After=network.target time-sync.target
+Wants=time-sync.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/user/droneRemoteIDSpoofer
+ExecStart=/home/user/droneRemoteIDSpoofer/.venv/bin/python3 scanner/combined_rid_listener.py \
+    --wifi-iface wlan0 \
+    --ble-mode extended \
+    --coded \
+    --db-file /home/user/droneRemoteIDSpoofer/rid_detections.db \
+    --log-jsonl /home/lab/droneRemoteIDSpoofer/rid_packets.jsonl \
+    --rotate-daily \
+    --quiet
+
+# Auto-restart on hardware disconnect or transient error
+Restart=always
+RestartSec=5s
+
+# Clean shutdown handling (allows finalize_all() and database commits)
+KillMode=mixed
+TimeoutStopSec=10s
+
+# Logging configuration
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=drone-scanner
+
+[Install]
+WantedBy=multi-user.target

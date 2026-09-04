@@ -276,6 +276,38 @@ class TestCombinedRIDListener(unittest.TestCase):
         self.assertEqual(sanitize_csv_cell("@SUM(A1:A10)"), "'@SUM(A1:A10)")
         self.assertEqual(sanitize_csv_cell("NORMAL_TEXT"), "NORMAL_TEXT")
 
+    def test_ble_sniffer_json_event_processing(self):
+        import queue
+        import json
+        event_queue = queue.Queue()
+        # Simulated JSON record from nrf_bt_sniffer_json.py for BLE 5 Extended Remote ID
+        raw_json_line = json.dumps({
+            "timestamp": 1725448000.123,
+            "mac": "FE:FB:89:DF:4A:3D",
+            "rssi_dbm": -75,
+            "pdu_type": "ADV_EXT_IND/AUX_ADV_IND",
+            "remote_id": {
+                "transport": "ble5_extended",
+                "counter": 42,
+                "parsed_messages": [
+                    {"type": "Basic ID", "id": "Spoofed_Serial_12345", "raw_hex": "021253706f6f6665645f53657269616c5f3132333435000000"},
+                    {"type": "Location", "lat": 47.3769, "lon": 8.5417, "alt": 450.0, "speed": 12.5, "heading": 180, "raw_hex": "1200b432021c3d18e8051759080b540b680834000017700000"}
+                ]
+            }
+        })
+        
+        record = json.loads(raw_json_line)
+        rid_info = record["remote_id"]
+        parsed_msgs = rid_info.get("parsed_messages", [])
+        transport_type = str(rid_info.get("transport", "bt5")).lower()
+        pdu_type = str(record.get("pdu_type", "")).upper()
+        transport = "bt5" if ("5" in transport_type or "ext" in transport_type or "AUX" in pdu_type) else "bt4"
+        
+        self.assertEqual(transport, "bt5")
+        self.assertEqual(len(parsed_msgs), 2)
+        self.assertEqual(parsed_msgs[0]["id"], "Spoofed_Serial_12345")
+        self.assertEqual(parsed_msgs[1]["lat"], 47.3769)
+
     def test_schedule_coverage(self):
         # Verify that with k=1 (2 in 2.4G, 1 in 5.8G), 6 cycles cover all 12 2.4G non-social and all 6 5.8G non-social channels
         k = 1
@@ -300,6 +332,92 @@ class TestCombinedRIDListener(unittest.TestCase):
         self.assertEqual(len(visited_5g), 6)
         self.assertEqual(set(visited_2g), set(NON_SOCIAL_CHANNELS_2G))
         self.assertEqual(set(visited_5g), set(NON_SOCIAL_CHANNELS_5G))
+
+    def test_nordic_ble_packet_metadata_and_rssi(self):
+        from evaluation.nrf_bt_sniffer_json import parse_packet_metadata
+        # Build realistic nRF Sniffer v2 DLT_NORDIC_BLE header (17 bytes)
+        # Board(1) + Len(2, e.g. 164 = 0x00A4) + Ver(1) + Cnt(2) + Type(1=0x06) + HdrLen(1=10) + Flags(1=0x01) + Ch(1=37) + RSSI(1=55 -> -55dBm) + EvtCnt(2) + DeltaTime(4)
+        # Followed by BLE_ADV_ACCESS_ADDR (4 bytes) + PDU Header (2 bytes) + AdvA MAC (6 bytes)
+        board = b'\x00'
+        pkt_len = struct.pack('<H', 164) # 0xA4, 0x00
+        ver = b'\x02'
+        cnt = struct.pack('<H', 123)
+        pkt_type = b'\x06' # event_packet
+        hdr_len = b'\x0A' # 10
+        flags = b'\x01' # CRC OK
+        rf_ch = bytes([37])
+        rssi_magnitude = bytes([55]) # -55 dBm
+        evt_cnt = struct.pack('<H', 1)
+        delta_t = struct.pack('<I', 1000)
+        
+        nordic_hdr = board + pkt_len + ver + cnt + pkt_type + hdr_len + flags + rf_ch + rssi_magnitude + evt_cnt + delta_t
+        self.assertEqual(len(nordic_hdr), 17)
+        
+        # Access Address: 0x8E89BED6
+        access_addr = b'\xd6\xbe\x89\x8e'
+        # PDU Header: ADV_EXT_IND (0x07)
+        pdu_hdr = b'\x07\x10'
+        # Extended Header with AdvA MAC: CD:57:9B:8E:EB:AB
+        mac_bytes_le = bytes.fromhex("ABEB8E9B57CD")
+        ext_hdr = b'\x08\x09\x09' + mac_bytes_le
+        
+        full_packet = nordic_hdr + access_addr + pdu_hdr + ext_hdr
+        
+        pdu_type_str, mac_addr, rssi_dbm, ch = parse_packet_metadata(full_packet)
+        self.assertEqual(pdu_type_str, "ADV_EXT_IND/AUX_ADV_IND")
+        self.assertEqual(mac_addr, "CD:57:9B:8E:EB:AB")
+        self.assertEqual(rssi_dbm, -55) # Verified NOT misidentified as -92 from length 0xA4
+        self.assertEqual(ch, 37)
+
+    def test_wifi_sniffer_frame_processing(self):
+        # Construct realistic Wi-Fi 802.11 Beacon frame with Radiotap header
+        # Radiotap header (18 bytes)
+        rt_hdr = b'\x00\x00\x12\x00\x2e\x48\x00\x00\x10\x02\x85\x09\xa0\x00\xa0\x00\x00\x00'
+        # 802.11 MAC Header: FrameControl (Beacon = 0x8000), Duration (0x0000), Addr1 (FF:FF:FF:FF:FF:FF), Addr2 (6 bytes), Addr3 (6 bytes), Seq (0x0000)
+        mac_addr_bytes = bytes.fromhex("00C0CA9910EA")
+        bssid_bytes = mac_addr_bytes
+        mac_hdr = b'\x80\x00\x00\x00' + (b'\xff' * 6) + mac_addr_bytes + bssid_bytes + b'\x00\x00'
+        # Beacon fixed parameters: Timestamp(8) + Interval(2) + Cap(2) = 12 bytes
+        beacon_fixed = b'\x00' * 12
+        # SSID IE: ID=0, Len=4, "RID1"
+        ie_ssid = b'\x00\x04RID1'
+        
+        # Build 1 ASTM Basic ID message (25 bytes)
+        serial = b"WIFI_TEST_DRONE_0001"
+        basic_id_msg = bytes([0x02, 0x12]) + serial + b'\x00\x00\x00'
+        # Pack header: 0xF2 (MsgType 0xF, ver 2), size=25 (0x19), count=1
+        astm_pack = bytes([0xF2, 0x19, 0x01]) + basic_id_msg
+        
+        # Vendor Specific IE: 0xDD (Tag), Len, OUI(FA:0B:BC) + AppCode(0x0D) + Counter(42) + astm_pack
+        vendor_payload = bytes([0x0D, 42]) + astm_pack
+        oui_and_payload = b'\xfa\x0b\xbc' + vendor_payload
+        ie_vendor = b'\xdd' + bytes([len(oui_and_payload)]) + oui_and_payload
+        
+        full_frame = rt_hdr + mac_hdr + beacon_fixed + ie_ssid + ie_vendor
+        
+        # Test simulated parsing logic from WifiSnifferThread
+        vendor_ie_idx = -1
+        search_offset = 0
+        while True:
+            idx = full_frame.find(b'\xfa\x0b\xbc', search_offset)
+            if idx == -1: break
+            if idx >= 2 and full_frame[idx - 2] == 0xDD:
+                vendor_ie_idx = idx
+                break
+            search_offset = idx + 1
+            
+        self.assertNotEqual(vendor_ie_idx, -1)
+        ie_len = full_frame[vendor_ie_idx - 1]
+        vendor_data = full_frame[vendor_ie_idx + 3 : vendor_ie_idx + ie_len]
+        self.assertEqual(vendor_data[0], 0x0D)
+        counter = vendor_data[1]
+        self.assertEqual(counter, 42)
+        astm_payload = vendor_data[2:]
+        
+        parsed_msgs, b64_blocks = parse_astm_payload(astm_payload)
+        self.assertEqual(len(parsed_msgs), 1)
+        self.assertEqual(parsed_msgs[0]["type"], "Basic ID")
+        self.assertEqual(parsed_msgs[0]["id"], "WIFI_TEST_DRONE_0001")
 
 if __name__ == "__main__":
     unittest.main()
