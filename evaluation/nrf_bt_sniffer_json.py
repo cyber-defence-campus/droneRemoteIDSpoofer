@@ -17,14 +17,12 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-# Ensure parent directory is in path to import sniffparser
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Ensure repository root is in sys.path so sniffparser is importable from anywhere
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
-try:
-    from sniffparser import ASTM_F3411_SpecParser
-except ImportError:
-    sys.stderr.write("[-] Error: Could not import ASTM_F3411_SpecParser from sniffparser.py\n")
-    sys.exit(1)
+from sniffparser import ASTM_F3411_SpecParser
 
 REMOTE_ID_UUID_BYTES = b"\xfa\xff"       # 16-bit UUID 0xFFFA in little-endian
 BLE_ADV_ACCESS_ADDR = b"\xd6\xbe\x89\x8e" # Little-endian 0x8E89BED6
@@ -204,74 +202,178 @@ def cleanup(signum=None, frame=None):
     sys.exit(0)
 
 
-def parse_packet_metadata(data: bytes) -> Tuple[str, str, Optional[int]]:
+def parse_packet_metadata(data: bytes) -> Tuple[str, str, Optional[int], Optional[int]]:
     """
-    Attempts to extract PDU type, Advertiser MAC address (AdvA), and RSSI from an nRF Sniffer packet.
+    Attempts to extract PDU type, Advertiser MAC address (AdvA), RSSI (dBm), and RF Channel from an nRF Sniffer packet.
+    Follows Bluetooth Core Specification Vol 6 Part B §2.3.4 (Extended Advertising PDU) and §2.3.1 (Legacy PDU).
     """
     mac_address = "UNKNOWN"
     pdu_type_str = "UNKNOWN_OR_DATA"
     rssi_dbm = None
+    rf_channel = None
 
     aa_idx = data.find(BLE_ADV_ACCESS_ADDR)
     if aa_idx != -1:
-        # 1. Extract RSSI from Nordic Radio Header preceding Access Address
-        # In nRF Sniffer v2/v3 (DLT_NORDIC_BLE / NRFS2_Packet):
-        # Header: Board(1) + Len(2) + Ver(1) + Cnt(2) + Type(1) + HdrLen(1) + Flags(1) + Ch(1) + RSSI(1) + EvtCnt(2) + DeltaTime(4)
-        # RSSI is at offset 10 (with board_id), offset 9 (without board_id), or aa_idx - 7.
-        for offset in (10, 9, aa_idx - 7, aa_idx - 6, aa_idx - 8):
-            if 0 <= offset < aa_idx:
-                val = struct.unpack("<b", bytes([data[offset]]))[0]
-                if -120 <= val <= -10:
-                    rssi_dbm = int(val)
-                    break
-        # Fallback heuristic: search preceding header bytes for valid dBm reading
-        if rssi_dbm is None:
-            for offset in range(min(aa_idx, 20)):
-                val = struct.unpack("<b", bytes([data[offset]]))[0]
-                if -110 <= val <= -20:
-                    rssi_dbm = int(val)
-                    break
-                    
+        # 1. Extract RSSI and RF Channel from Nordic Radio Header preceding Access Address
+        # In nRF Sniffer v2/v3 (DLT_NORDIC_BLE / NRFS2_Packet / NRF2_Packet_Event):
+        # Header layout:
+        #   Board(1) + Len(2) + Ver(1) + Cnt(2) + Type(1) + HdrLen(1) + Flags(1) + Ch(1) + RSSI(1) + EvtCnt(2) + DeltaTime(4)
+        # Access Address starts immediately after DeltaTime (aa_idx).
+        # Therefore, relative to aa_idx:
+        #   - RSSI is at offset (aa_idx - 7) (e.g. Offset 10 when Board is present, aa_idx=17)
+        #   - RF Channel is at offset (aa_idx - 8) (e.g. Offset 9 when Board is present, aa_idx=17)
+        if aa_idx >= 7:
+            raw_rssi = data[aa_idx - 7]
+            if 10 <= raw_rssi <= 120:
+                rssi_dbm = -int(raw_rssi)
+            elif 136 <= raw_rssi <= 246:  # signed -120 to -10 (0x88 to 0xF6)
+                rssi_dbm = int(raw_rssi - 256)
+            elif -120 <= raw_rssi <= -10:
+                rssi_dbm = int(raw_rssi)
+
+        if aa_idx >= 8:
+            ch_val = data[aa_idx - 8]
+            if 0 <= ch_val <= 39:
+                rf_channel = int(ch_val)
+
         # 2. Extract PDU Type & MAC Address following Access Address
         if len(data) >= aa_idx + 6:
             pdu_type = data[aa_idx + 4] & 0x0F
             pdu_type_str = PDU_TYPE_MAP.get(pdu_type, f"PDU_{pdu_type:02X}")
             payload = data[aa_idx + 6 :]
 
-            ext_hdr_len = (payload[0] & 0x3F) if len(payload) > 0 else 0
-            is_ext_adv = (pdu_type == 0x07) or (
-                len(payload) >= 9
-                and ext_hdr_len > 0
-                and payload[1] == 0x09
-                and payload[2] == 0x09
-            )
-
-            if is_ext_adv:
-                if pdu_type != 0x07:
-                    pdu_type_str = "ADV_EXT_IND/AUX_ADV_IND"
-
-                if len(payload) >= 9 and payload[1] == 0x09 and payload[2] == 0x09:
-                    mac_bytes = payload[3:9]
-                    mac_address = ":".join(f"{b:02X}" for b in reversed(mac_bytes))
-                elif len(payload) >= 8 and (payload[1] & 0x01):
-                    mac_bytes = payload[2:8]
-                    mac_address = ":".join(f"{b:02X}" for b in reversed(mac_bytes))
+            if pdu_type == 0x07:
+                pdu_type_str = "ADV_EXT_IND/AUX_ADV_IND"
+                # Bluetooth Core Spec Vol 6 Part B §2.3.4:
+                # Byte 0 of payload: Extended Header Length (bits 0-5) | AdvMode (bits 6-7)
+                if len(payload) >= 1:
+                    ext_hdr_len = payload[0] & 0x3F
+                    if ext_hdr_len > 0 and len(payload) >= 1 + ext_hdr_len:
+                        ext_hdr = payload[1 : 1 + ext_hdr_len]
+                        flags = ext_hdr[0]
+                        # Bit 0 (0x01) of Extended Header Flags indicates AdvA is present (6 bytes)
+                        if (flags & 0x01) and len(ext_hdr) >= 7:
+                            mac_bytes = ext_hdr[1:7]
+                            mac_address = ":".join(f"{b:02X}" for b in reversed(mac_bytes))
             else:
                 # Legacy PDU types: ADV_IND(0), ADV_DIRECT_IND(1), ADV_NONCONN_IND(2), SCAN_RSP(4), ADV_SCAN_IND(6)
                 if pdu_type in (0x00, 0x01, 0x02, 0x04, 0x06):
                     if len(payload) >= 6:
                         mac_bytes = payload[0:6]
                         mac_address = ":".join(f"{b:02X}" for b in reversed(mac_bytes))
-    else:
-        # Try finding valid RSSI in first 16 bytes if Access Address was stripped
-        for offset in (10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0):
-            if offset < len(data):
-                val = struct.unpack("<b", bytes([data[offset]]))[0]
-                if -110 <= val <= -20:
-                    rssi_dbm = int(val)
+
+    return pdu_type_str, mac_address, rssi_dbm, rf_channel
+
+
+def extract_remote_id_info(data: bytes, pdu_type_str: str) -> Optional[Dict[str, Any]]:
+    """
+    Extracts ASTM F3411 Remote ID information from raw packet bytes.
+    Traverses Bluetooth AD structures (Length-Type-Value) in the advertising payload
+    to avoid false-positive offset shifts from header or coordinate byte collisions.
+    """
+    # 1. Identify Advertising Data (AdvData) slice
+    adv_data = None
+    aa_idx = data.find(BLE_ADV_ACCESS_ADDR)
+    if aa_idx != -1 and len(data) >= aa_idx + 6:
+        pdu_type = data[aa_idx + 4] & 0x0F
+        payload = data[aa_idx + 6 :]
+        if pdu_type == 0x07:
+            if len(payload) >= 1:
+                ext_hdr_len = payload[0] & 0x3F
+                adv_data = payload[1 + ext_hdr_len :]
+        elif pdu_type in (0x00, 0x01, 0x02, 0x04, 0x06):
+            if len(payload) >= 6:
+                adv_data = payload[6:]
+
+    counter = 0
+    astm_data = None
+
+    # 2. Structured AD Structure Traversal (Standard Bluetooth LTV format)
+    if adv_data:
+        offset = 0
+        total_len = len(adv_data)
+        while offset < total_len:
+            ad_len = adv_data[offset]
+            if ad_len == 0:
+                break
+            if offset + 1 + ad_len > total_len:
+                break
+            ad_type = adv_data[offset + 1]
+            ad_val = adv_data[offset + 2 : offset + 1 + ad_len]
+            offset += 1 + ad_len
+
+            # AD Type 0x16 = Service Data - 16-bit UUID
+            if ad_type == 0x16 and len(ad_val) >= 2:
+                # UUID 0xFFFA (Little-Endian: \xfa\xff)
+                if ad_val[:2] == REMOTE_ID_UUID_BYTES:
+                    svc_payload = ad_val[2:]
+                    if len(svc_payload) >= 2 and svc_payload[0] == 0x0D:
+                        counter = svc_payload[1]
+                        astm_data = svc_payload[2:]
+                    else:
+                        counter = 0
+                        astm_data = svc_payload
                     break
 
-    return pdu_type_str, mac_address, rssi_dbm
+    # 3. Robust Fallback if not found via strict LTV traversal
+    if astm_data is None:
+        # Fallback A: Search for AD Type 0x16 + UUID 0xFFFA + AppCode 0x0D
+        marker_16 = b"\x16\xfa\xff\x0d"
+        idx = data.find(marker_16)
+        if idx != -1 and len(data) >= idx + 5:
+            counter = data[idx + 4]
+            astm_data = data[idx + 5 :]
+        else:
+            # Fallback B: Search for UUID 0xFFFA + AppCode 0x0D
+            marker_uuid = b"\xfa\xff\x0d"
+            idx = data.find(marker_uuid)
+            if idx != -1 and len(data) >= idx + 4:
+                counter = data[idx + 3]
+                astm_data = data[idx + 4 :]
+            else:
+                # Fallback C: Generic UUID search
+                idx = data.find(REMOTE_ID_UUID_BYTES)
+                if idx != -1:
+                    payload_after_uuid = data[idx + len(REMOTE_ID_UUID_BYTES) :]
+                    if len(payload_after_uuid) >= 2 and payload_after_uuid[0] == 0x0D:
+                        counter = payload_after_uuid[1]
+                        astm_data = payload_after_uuid[2:]
+                    else:
+                        counter = 0
+                        astm_data = payload_after_uuid
+
+    if astm_data is None or len(astm_data) < 25:
+        return None
+
+    # Distinguish BLE 4 Legacy vs BLE 5 Extended Advertising
+    msg_type = (astm_data[0] >> 4) if len(astm_data) > 0 else None
+    if (
+        msg_type == 0xF
+        or len(astm_data) > 30
+        or pdu_type_str in ("ADV_EXT_IND/AUX_ADV_IND", "PDU_07")
+        or pdu_type_str.startswith("ADV_EXT")
+        or pdu_type_str.startswith("AUX_")
+    ):
+        transport = "ble5_extended"
+    elif pdu_type_str in ("ADV_IND", "ADV_DIRECT_IND", "ADV_NONCONN_IND", "ADV_SCAN_IND", "SCAN_RSP"):
+        transport = "ble4_legacy"
+    else:
+        transport = "ble4_legacy"
+
+    parser = ASTM_F3411_SpecParser(astm_data)
+    try:
+        parsed_messages = parser.parse_payload()
+    except Exception as e:
+        parsed_messages = [{"type": "ParserError", "error": str(e)}]
+
+    if not parsed_messages:
+        return None
+
+    return {
+        "transport": transport,
+        "counter": counter,
+        "parsed_messages": parsed_messages
+    }
 
 
 
@@ -294,7 +396,7 @@ def process_packet(
     if not data:
         return
 
-    pdu_type_str, mac_address, rssi_dbm = parse_packet_metadata(data)
+    pdu_type_str, mac_address, rssi_dbm, rf_channel = parse_packet_metadata(data)
 
     # Apply MAC address filtering (checks parsed MAC and raw link-layer bytes in header)
     if filter_mac:
@@ -313,40 +415,7 @@ def process_packet(
         if not match_found:
             return
 
-    remote_id_info = None
-
-    # Check if ASTM Remote ID UUID (0xFFFA in little-endian) exists in packet
-    idx = data.find(REMOTE_ID_UUID_BYTES)
-    if idx != -1:
-        payload_after_uuid = data[idx + len(REMOTE_ID_UUID_BYTES) :]
-        
-        if len(payload_after_uuid) >= 2 and payload_after_uuid[0] == 0x0D:
-            counter = payload_after_uuid[1]
-            astm_data = payload_after_uuid[2:]
-        else:
-            counter = 0
-            astm_data = payload_after_uuid
-
-        # Distinguish BLE 4 Legacy vs BLE 5 Extended Advertising based on ASTM message packs and Link-Layer PDU type
-        msg_type = (astm_data[0] >> 4) if len(astm_data) > 0 else None
-        if msg_type == 0xF or len(astm_data) > 30 or pdu_type_str in ("ADV_EXT_IND/AUX_ADV_IND", "PDU_07") or pdu_type_str.startswith("ADV_EXT") or pdu_type_str.startswith("AUX_"):
-            transport = "ble5_extended"
-        elif pdu_type_str in ("ADV_IND", "ADV_DIRECT_IND", "ADV_NONCONN_IND", "ADV_SCAN_IND", "SCAN_RSP"):
-            transport = "ble4_legacy"
-        else:
-            transport = "ble4_legacy"
-
-        parser = ASTM_F3411_SpecParser(astm_data)
-        try:
-            parsed_messages = parser.parse_payload()
-        except Exception as e:
-            parsed_messages = [{"type": "ParserError", "error": str(e)}]
-
-        remote_id_info = {
-            "transport": transport,
-            "counter": counter,
-            "parsed_messages": parsed_messages
-        }
+    remote_id_info = extract_remote_id_info(data, pdu_type_str)
 
     # If --only-rid flag was given and no Remote ID payload was detected, ignore this packet
     if only_rid and not remote_id_info:
@@ -401,6 +470,7 @@ def process_packet(
         "timestamp_iso": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
         "pdu_type": pdu_type_str,
         "mac": mac_address,
+        "rf_channel": rf_channel,
         "rssi_dbm": rssi_dbm,
         "raw_length": len(data),
         "raw_hex": data.hex().upper(),
@@ -452,10 +522,18 @@ def run_sniffer(
                 sys.stderr.write(f"[!] Warning: Specified port {nrf_port} not found! Automatically switching to available serial port: {alt_ports[0]}\n")
                 nrf_port = alt_ports[0]
 
-        if not os.path.exists(pcap_path):
-            sys.stderr.write(f"[*] Creating FIFO named pipe at {pcap_path}...\n")
+        if os.path.exists(pcap_path):
+            try:
+                os.remove(pcap_path)
+            except OSError:
+                pass
+
+        sys.stderr.write(f"[*] Creating FIFO named pipe at {pcap_path}...\n")
+        try:
             os.mkfifo(pcap_path)
             fifo_created_path = pcap_path
+        except OSError as e:
+            sys.stderr.write(f"[!] Warning: Could not create FIFO at {pcap_path}: {e}\n")
 
         nrf_cmd = [
             "nrfutil", "ble-sniffer", "sniff", "--only-advertising",
@@ -466,12 +544,12 @@ def run_sniffer(
         ]
         if filter_mac:
             nrf_cmd.extend(["--follow", filter_mac])
-        if coded_phy:
+        if coded_phy or only_bt5:
             nrf_cmd.append("--coded")
 
         sys.stderr.write(f"[*] Launching nRF sniffer process on {nrf_port}: {' '.join(nrf_cmd)}\n")
         try:
-            nrf_proc = subprocess.Popen(nrf_cmd, stderr=subprocess.DEVNULL, start_new_session=True)
+            nrf_proc = subprocess.Popen(nrf_cmd, stderr=sys.stderr, start_new_session=True)
         except FileNotFoundError:
             sys.stderr.write("[-] Error: 'nrfutil' command not found in PATH. Please install nrfutil and ble-sniffer plugin.\n")
             cleanup()

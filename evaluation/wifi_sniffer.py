@@ -9,8 +9,13 @@ import os
 import signal
 from scapy.all import sniff, Dot11Beacon, Dot11Elt, wrpcap
 
+# Ensure repository root is in sys.path
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
 # Local parser
-from sniffparser import ASTM_F3411_SpecParser
+from sniffparser import ASTM_F3411_SpecParser, parse_astm_payload
 
 # Globals
 START_TIME = None
@@ -41,16 +46,6 @@ def teardown_monitor_mode(interface: str):
         subprocess.run(["ip", "link", "set", interface, "up"], check=True, stderr=subprocess.DEVNULL)
     except Exception as e:
         print(f"[!] Failed to restore interface {interface}: {e}")
-
-def extract_messages(msgs_raw: bytes, msg_count: int) -> list:
-    """Extract 25-byte messages and base64 encode them."""
-    encoded_msgs = []
-    for i in range(msg_count):
-        offset = i * 25
-        if offset + 25 <= len(msgs_raw):
-            msg = msgs_raw[offset:offset+25]
-            encoded_msgs.append(base64.b64encode(msg).decode('ascii'))
-    return encoded_msgs
 
 def process_packet(pkt):
     from scapy.layers.dot11 import Dot11Beacon, Dot11Elt, Dot11
@@ -142,59 +137,51 @@ def _handle_astm_payload(pkt, mac_addr, rssi, vendor_data, ssid_val, rates_val, 
         
         # We only expect Message Packs (0xF) over Wi-Fi/NAN
         if msg_type == 0xF and len(vendor_data) > 4 and vendor_data[3] == 0x19:
-            msg_count = vendor_data[4]
-            expected_len = msg_count * 25
-            if 5 + expected_len <= len(vendor_data):
-                msgs_raw = vendor_data[5 : 5 + expected_len]
+            t_str = "Wi-Fi NAN" if transport == "nan" else "Wi-Fi Beacon"
+            print(f"🚁 {t_str} Drone Detected! MAC: {mac_addr} | RSSI: {rssi}")
+            print(f"  Raw Remote ID Payload (Hex): {vendor_data.hex().upper()}")
+            
+            parsed_data, msgs_b64 = parse_astm_payload(vendor_data[2:])
+            
+            serial = None
+            if parsed_data:
+                for entry in parsed_data:
+                    print(f"    - {entry}")
+                    if entry.get("type") == "Basic ID" and entry.get("id"):
+                        serial = entry["id"]
+                        MAC_TO_SERIAL[mac_addr] = serial
+            else:
+                print(f"    - (Parser returned no data)")
                 
-                t_str = "Wi-Fi NAN" if transport == "nan" else "Wi-Fi Beacon"
-                print(f"🚁 {t_str} Drone Detected! MAC: {mac_addr} | RSSI: {rssi}")
-                print(f"  Raw Remote ID Payload (Hex): {vendor_data.hex().upper()}")
-                
-                parser = ASTM_F3411_SpecParser(vendor_data[2:]) # Skip AppCode and Counter
-                parsed_data = parser.parse_payload()
-                
-                serial = None
-                if parsed_data:
-                    for entry in parsed_data:
-                        print(f"    - {entry}")
-                        if entry.get("type") == "Basic ID" and entry.get("id"):
-                            serial = entry["id"]
-                            MAC_TO_SERIAL[mac_addr] = serial
-                else:
-                    print(f"    - (Parser returned no data. msg_count: {msg_count})")
+            # Write to JSONL
+            if REPLAY_FILE is not None and msgs_b64:
+                global START_TIME
+                if START_TIME is None:
+                    START_TIME = float(pkt.time)
                     
-                # Write to JSONL
-                if REPLAY_FILE is not None:
-                    msgs_b64 = extract_messages(msgs_raw, msg_count)
-                    if msgs_b64:
-                        global START_TIME
-                        if START_TIME is None:
-                            START_TIME = float(pkt.time)
-                            
-                        event = {
-                            "time_offset_ms": int((float(pkt.time) - START_TIME) * 1000),
-                            "transport": transport,
-                            "counter": counter,
-                            "messages_b64": msgs_b64,
-                            "mac": mac_addr
-                        }
-                        if serial:
-                            event["serial"] = serial
-                        elif mac_addr in MAC_TO_SERIAL:
-                            event["serial"] = MAC_TO_SERIAL[mac_addr]
-                            
-                        if ssid_val: event["ssid"] = ssid_val
-                        if rates_val: event["rates_b64"] = base64.b64encode(rates_val).decode('ascii')
-                        if dsset_val: event["dsset_b64"] = base64.b64encode(dsset_val).decode('ascii')
-                        if tim_val: event["tim_b64"] = base64.b64encode(tim_val).decode('ascii')
-                        if erp_val: event["erp_b64"] = base64.b64encode(erp_val).decode('ascii')
-                        if esr_val: event["esr_b64"] = base64.b64encode(esr_val).decode('ascii')
-                            
-                        REPLAY_FILE.write(json.dumps(event) + "\n")
-                        REPLAY_FILE.flush()
-                        
-                print("-" * 50)
+                event = {
+                    "time_offset_ms": int((float(pkt.time) - START_TIME) * 1000),
+                    "transport": transport,
+                    "counter": counter,
+                    "messages_b64": msgs_b64,
+                    "mac": mac_addr
+                }
+                if serial:
+                    event["serial"] = serial
+                elif mac_addr in MAC_TO_SERIAL:
+                    event["serial"] = MAC_TO_SERIAL[mac_addr]
+                    
+                if ssid_val: event["ssid"] = ssid_val
+                if rates_val: event["rates_b64"] = base64.b64encode(rates_val).decode('ascii')
+                if dsset_val: event["dsset_b64"] = base64.b64encode(dsset_val).decode('ascii')
+                if tim_val: event["tim_b64"] = base64.b64encode(tim_val).decode('ascii')
+                if erp_val: event["erp_b64"] = base64.b64encode(erp_val).decode('ascii')
+                if esr_val: event["esr_b64"] = base64.b64encode(esr_val).decode('ascii')
+                    
+                REPLAY_FILE.write(json.dumps(event) + "\n")
+                REPLAY_FILE.flush()
+                    
+            print("-" * 50)
                 
     except Exception as e:
         import traceback

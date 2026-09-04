@@ -195,6 +195,11 @@ class EncounterTracker:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_encounters_serial ON encounters(serial_number);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_encounters_time ON encounters(first_seen, last_seen);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_encounters_active ON encounters(is_active);")
+            
+            # Auto-reconcile any lingering active encounters from prior runs that are past timeout_s
+            now = time.time()
+            conn.execute("UPDATE encounters SET is_active = 0 WHERE is_active = 1 AND (? - last_seen) > ?;",
+                         (now, self.timeout_s))
             conn.commit()
 
     def update_with_packet(self, packet: Dict[str, Any]) -> str:
@@ -1001,6 +1006,33 @@ class UnifiedTelemetryLogger:
 
         return self.log_file_handle
 
+    def periodic_maintenance(self, now: Optional[float] = None):
+        """
+        Periodic maintenance task called continuously from the main loop even when the event queue is empty.
+        1. Sweeps for encounters exceeding the silence timeout (> 5 minutes) and closes them in SQLite.
+        2. In quiet / daemon mode, prints a periodic status heartbeat every 30 seconds.
+        """
+        if now is None:
+            now = time.time()
+
+        # 1. Sweep for timed-out encounters every 5 seconds
+        if self.encounter_tracker and (now - self.last_timeout_check >= 5.0):
+            closed = self.encounter_tracker.check_timeouts(now)
+            for c_id in closed:
+                if not self.quiet:
+                    print(f"{C_GRAY}[*] Flight Encounter {c_id} closed ({self.encounter_tracker.timeout_s:.0f}s silence timeout).{C_RESET}")
+            self.last_timeout_check = now
+
+        # 2. In quiet mode, emit periodic heartbeat every 30s even when 0 packets arrive
+        if self.quiet and (now - self.last_heartbeat >= 30.0):
+            self.last_heartbeat = now
+            iso_str = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            active_cnt = len(self.encounter_tracker.active_encounters) if self.encounter_tracker else 0
+            bt_cnt = self.stats["transports"].get("bt5", 0) + self.stats["transports"].get("bt4", 0)
+            wifi_cnt = self.stats["transports"].get("wifi", 0) + self.stats["transports"].get("nan", 0)
+            print(f"[STATUS {iso_str}] Total: {self.stats['total_packets']} pkts (BLE: {bt_cnt}, Wi-Fi: {wifi_cnt}) | Active Encounters: {active_cnt} | Unique Drones: {len(self.stats['macs'])}")
+            sys.stdout.flush()
+
     def process_event(self, event: Dict[str, Any]):
         now = time.time()
         if self.first_packet_time is None:
@@ -1037,13 +1069,6 @@ class UnifiedTelemetryLogger:
         if self.encounter_tracker:
             encounter_id = self.encounter_tracker.update_with_packet(event)
 
-            # Periodic sweep for timed out encounters every 15 seconds
-            if now - self.last_timeout_check > 15.0:
-                closed = self.encounter_tracker.check_timeouts(now)
-                for c_id in closed:
-                    print(f"{C_GRAY}[*] Flight Encounter {c_id} closed (5-minute silence timeout).{C_RESET}")
-                self.last_timeout_check = now
-
         # 2. Write to Replay-Compatible JSONL
         ev_ts = event.get("timestamp", now)
         handle = self._ensure_log_handle(ev_ts)
@@ -1063,16 +1088,8 @@ class UnifiedTelemetryLogger:
             handle.write(json.dumps(replay_record) + "\n")
             handle.flush()
 
-        # In quiet mode, emit periodic heartbeat every 30s instead of per-packet verbose banner
+        # In quiet mode, per-packet display is suppressed (heartbeats handled in periodic_maintenance)
         if self.quiet:
-            if now - self.last_heartbeat >= 30.0:
-                self.last_heartbeat = now
-                iso_str = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                active_cnt = len(self.encounter_tracker.active_encounters) if self.encounter_tracker else 0
-                bt_cnt = self.stats["transports"].get("bt5", 0) + self.stats["transports"].get("bt4", 0)
-                wifi_cnt = self.stats["transports"].get("wifi", 0) + self.stats["transports"].get("nan", 0)
-                print(f"[STATUS {iso_str}] Total: {self.stats['total_packets']} pkts (BLE: {bt_cnt}, Wi-Fi: {wifi_cnt}) | Active Encounters: {active_cnt} | Unique Drones: {len(self.stats['macs'])}")
-                sys.stdout.flush()
             return
 
         # 3. Format Live Console Banner
@@ -1415,11 +1432,13 @@ def main():
     # Main logging loop
     try:
         while not stop_event.is_set():
+            now = time.time()
             try:
-                event = event_queue.get(timeout=0.1)
+                event = event_queue.get(timeout=0.2)
                 logger_worker.process_event(event)
             except queue.Empty:
-                continue
+                pass
+            logger_worker.periodic_maintenance(now)
     except KeyboardInterrupt:
         shutdown(None, None)
     finally:

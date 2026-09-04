@@ -279,7 +279,87 @@ class TestDatabaseAndReplayLogging(unittest.TestCase):
             cnt = conn.execute("SELECT packet_count FROM encounters WHERE encounter_id = ?", (enc_id,)).fetchone()[0]
             self.assertEqual(cnt, 2)  # Updated to 2 on finalize
 
+    def test_periodic_maintenance_idle_timeout(self):
+        # Verify that periodic_maintenance closes encounters during prolonged silence even if 0 packets arrive
+        logger = UnifiedTelemetryLogger(
+            log_jsonl_path=self.jsonl_path,
+            db_path=self.db_path,
+            encounter_timeout_s=5.0
+        )
+        t0 = 1000.0
+        pkt = {
+            "timestamp": t0,
+            "mac": "55:55:55:55:55:55",
+            "serial_number": "SILENCE_DRONE",
+            "transport": "bt5",
+            "channel": "Adv",
+            "rssi_dbm": -70,
+            "messages": [{"type": "Basic ID", "id": "SILENCE_DRONE"}]
+        }
+        logger.process_event(pkt)
+        self.assertEqual(len(logger.encounter_tracker.active_encounters), 1)
+
+        # Simulate 10 seconds of idle time where NO packets arrive, but periodic_maintenance is called
+        logger.last_timeout_check = t0
+        logger.periodic_maintenance(now=t0 + 10.0)
+
+        # Encounter should be closed in tracker and in SQLite
+        self.assertEqual(len(logger.encounter_tracker.active_encounters), 0)
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT is_active FROM encounters WHERE serial_number = 'SILENCE_DRONE'").fetchone()
+            self.assertEqual(row[0], 0)
+        logger.close()
+
+    def test_query_stale_reconciliation(self):
+        from scanner.query_rid_db import reconcile_stale_encounters
+        # Manually insert a stale active encounter in SQLite (e.g. from an unclean shutdown hours ago)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS encounters (
+                    encounter_id TEXT PRIMARY KEY,
+                    mac TEXT NOT NULL,
+                    serial_number TEXT,
+                    first_seen REAL NOT NULL,
+                    first_seen_iso TEXT NOT NULL,
+                    last_seen REAL NOT NULL,
+                    last_seen_iso TEXT NOT NULL,
+                    duration_s REAL NOT NULL,
+                    packet_count INTEGER NOT NULL,
+                    transports TEXT NOT NULL,
+                    channels TEXT NOT NULL,
+                    min_rssi_dbm INTEGER,
+                    max_rssi_dbm INTEGER,
+                    avg_rssi_dbm REAL,
+                    min_alt_m REAL,
+                    max_alt_m REAL,
+                    max_speed_mps REAL,
+                    pilot_lat REAL,
+                    pilot_lon REAL,
+                    pilot_alt_m REAL,
+                    operator_id TEXT,
+                    self_id_desc TEXT,
+                    trajectory_json TEXT,
+                    is_active INTEGER NOT NULL DEFAULT 1
+                );
+            """)
+            stale_time = time.time() - 3600 # 1 hour ago
+            conn.execute("""
+                INSERT INTO encounters (
+                    encounter_id, mac, serial_number, first_seen, first_seen_iso,
+                    last_seen, last_seen_iso, duration_s, packet_count, transports,
+                    channels, is_active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, ("ENC-STALE-001", "11:22:33:44:55:66", "STALE_DRONE", stale_time, "iso", stale_time, "iso", 0, 1, "bt5", "Adv", 1))
+            conn.commit()
+
+        # Run reconciliation
+        with sqlite3.connect(self.db_path) as conn:
+            reconcile_stale_encounters(conn, timeout_s=300.0)
+            row = conn.execute("SELECT is_active FROM encounters WHERE encounter_id = 'ENC-STALE-001'").fetchone()
+            self.assertEqual(row[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

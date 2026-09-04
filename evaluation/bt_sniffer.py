@@ -5,7 +5,15 @@ import json
 import struct
 import socket
 import select
-from sniffparser import ASTM_F3411_SpecParser
+import sys
+import os
+
+# Ensure repository root is in sys.path
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from sniffparser import ASTM_F3411_SpecParser, parse_astm_payload
 
 REMOTE_ID_UUID = b"\xfa\xff" # 16-bit UUID in little-endian
 
@@ -53,8 +61,7 @@ def handle_payload(mac: str, rssi: int, service_data_payload: bytes):
         else:
             print("  [Protocol] BLE 4 Legacy Advertising (Single Message)")
             
-        parser = ASTM_F3411_SpecParser(astm_data)
-        parsed_data = parser.parse_payload()
+        parsed_data, msgs_b64 = parse_astm_payload(astm_data)
         
         serial = None
         if parsed_data:
@@ -67,35 +74,21 @@ def handle_payload(mac: str, rssi: int, service_data_payload: bytes):
             print(f"    - (Parser returned no data. astm_data length: {len(astm_data)}, type: {msg_type})")
             
         # Optionally write to replay JSONL
-        if REPLAY_FILE is not None:
-            msgs_b64 = []
-            if msg_type == 0xF and len(astm_data) >= 3:
-                msg_count = astm_data[2]
-                for i in range(msg_count):
-                    offset = 3 + (i * 25)
-                    if offset + 25 <= len(astm_data):
-                        msg = astm_data[offset:offset+25]
-                        msgs_b64.append(base64.b64encode(msg).decode('ascii'))
-            else:
-                if len(astm_data) >= 25:
-                    msg = astm_data[0:25]
-                    msgs_b64.append(base64.b64encode(msg).decode('ascii'))
-                    
-            if msgs_b64:
-                event = {
-                    "time_offset_ms": int((time.time() - START_TIME) * 1000),
-                    "transport": transport,
-                    "counter": counter,
-                    "messages_b64": msgs_b64,
-                    "mac": mac
-                }
-                if serial:
-                    event["serial"] = serial
-                elif mac in MAC_TO_SERIAL:
-                    event["serial"] = MAC_TO_SERIAL[mac]
-                    
-                REPLAY_FILE.write(json.dumps(event) + "\n")
-                REPLAY_FILE.flush()
+        if REPLAY_FILE is not None and msgs_b64:
+            event = {
+                "time_offset_ms": int((time.time() - START_TIME) * 1000),
+                "transport": transport,
+                "counter": counter,
+                "messages_b64": msgs_b64,
+                "mac": mac
+            }
+            if serial:
+                event["serial"] = serial
+            elif mac in MAC_TO_SERIAL:
+                event["serial"] = MAC_TO_SERIAL[mac]
+                
+            REPLAY_FILE.write(json.dumps(event) + "\n")
+            REPLAY_FILE.flush()
             
     except Exception as e:
         import traceback

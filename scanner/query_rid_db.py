@@ -19,6 +19,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -53,9 +54,20 @@ def get_db_connection(db_path: str) -> sqlite3.Connection:
     if not os.path.exists(db_path):
         print(f"{C_RED}[-] Error: Database file '{db_path}' does not exist.{C_RESET}")
         sys.exit(1)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10.0)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def reconcile_stale_encounters(conn: sqlite3.Connection, timeout_s: float = 300.0):
+    """Marks any encounters that have exceeded the silence timeout as is_active = 0 in SQLite."""
+    try:
+        now = time.time()
+        conn.execute("UPDATE encounters SET is_active = 0 WHERE is_active = 1 AND (? - last_seen) > ?;",
+                     (now, timeout_s))
+        conn.commit()
+    except Exception:
+        pass
 
 
 # ============================================================================
@@ -64,6 +76,9 @@ def get_db_connection(db_path: str) -> sqlite3.Connection:
 
 def cmd_list(args):
     conn = get_db_connection(args.db)
+    timeout_s = getattr(args, "timeout_s", 300.0)
+    reconcile_stale_encounters(conn, timeout_s)
+
     query = "SELECT * FROM encounters WHERE 1=1"
     params = []
 
@@ -102,6 +117,7 @@ def cmd_list(args):
     print(f"{C_BOLD}{hdr}{C_RESET}")
     print(f"{C_GRAY}{'-'*len(hdr)}{C_RESET}")
 
+    now = time.time()
     for r in rows:
         enc_id = r["encounter_id"]
         start_str = r["first_seen_iso"][:19].replace("T", " ")
@@ -111,7 +127,8 @@ def cmd_list(args):
         serial = r["serial_number"] or f"{C_GRAY}<None>{C_RESET}"
         transports = r["transports"]
         max_alt = f"{r['max_alt_m']:.1f}m" if r["max_alt_m"] is not None else f"{C_GRAY}-{C_RESET}"
-        status = f"{C_GREEN}ACTIVE{C_RESET}" if r["is_active"] else f"{C_GRAY}CLOSED{C_RESET}"
+        is_active = bool(r["is_active"] and (now - r["last_seen"] <= timeout_s))
+        status = f"{C_GREEN}ACTIVE{C_RESET}" if is_active else f"{C_GRAY}CLOSED{C_RESET}"
 
         print(f"{C_WHITE}{enc_id:<26}{C_RESET} {start_str:<19} {dur_str:<10} {pkts:<6} {mac:<18} {serial:<22} {transports:<14} {max_alt:<9} {status:<8}")
 
@@ -124,6 +141,9 @@ def cmd_list(args):
 
 def cmd_show(args):
     conn = get_db_connection(args.db)
+    timeout_s = getattr(args, "timeout_s", 300.0)
+    reconcile_stale_encounters(conn, timeout_s)
+
     query_str = """
         SELECT * FROM encounters 
         WHERE encounter_id = ? OR encounter_id LIKE ? 
@@ -145,7 +165,8 @@ def cmd_show(args):
     print(f"{C_BOLD}🚁 FLIGHT ENCOUNTER DETAILS: {row['encounter_id']}{C_RESET}")
     print(f"{C_BOLD}{'='*65}{C_RESET}")
 
-    status_str = f"{C_GREEN}ACTIVE (In Progress){C_RESET}" if row["is_active"] else f"{C_GRAY}CLOSED (Completed){C_RESET}"
+    is_active = bool(row["is_active"] and (time.time() - row["last_seen"] <= timeout_s))
+    status_str = f"{C_GREEN}ACTIVE (In Progress){C_RESET}" if is_active else f"{C_GRAY}CLOSED (Completed){C_RESET}"
     print(f"  • {C_BOLD}Status           :{C_RESET} {status_str}")
     print(f"  • {C_BOLD}Transmitter MAC  :{C_RESET} {row['mac']}")
     print(f"  • {C_BOLD}UAS Serial Number:{C_RESET} {row['serial_number'] or 'Not Broadcasted'}")
@@ -353,6 +374,8 @@ def cmd_export_csv(args):
 
 def cmd_stats(args):
     conn = get_db_connection(args.db)
+    timeout_s = getattr(args, "timeout_s", 300.0)
+    reconcile_stale_encounters(conn, timeout_s)
 
     total_enc = conn.execute("SELECT COUNT(*) FROM encounters").fetchone()[0]
     active_enc = conn.execute("SELECT COUNT(*) FROM encounters WHERE is_active = 1").fetchone()[0]
@@ -389,6 +412,8 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--db", default="rid_detections.db", help="Path to SQLite database file")
+    parser.add_argument("--timeout-s", "--timeout", dest="timeout_s", type=float, default=300.0,
+                        help="Flight encounter silence timeout in seconds (default: 300s)")
 
     subparsers = parser.add_subparsers(dest="command", required=True, help="Command to execute")
 

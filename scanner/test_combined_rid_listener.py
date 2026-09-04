@@ -337,14 +337,13 @@ class TestCombinedRIDListener(unittest.TestCase):
         from evaluation.nrf_bt_sniffer_json import parse_packet_metadata
         # Build realistic nRF Sniffer v2 DLT_NORDIC_BLE header (17 bytes)
         # Board(1) + Len(2, e.g. 164 = 0x00A4) + Ver(1) + Cnt(2) + Type(1=0x06) + HdrLen(1=10) + Flags(1=0x01) + Ch(1=37) + RSSI(1=55 -> -55dBm) + EvtCnt(2) + DeltaTime(4)
-        # Followed by BLE_ADV_ACCESS_ADDR (4 bytes) + PDU Header (2 bytes) + AdvA MAC (6 bytes)
         board = b'\x00'
-        pkt_len = struct.pack('<H', 164) # 0xA4, 0x00
+        pkt_len = struct.pack('<H', 164)
         ver = b'\x02'
         cnt = struct.pack('<H', 123)
-        pkt_type = b'\x06' # event_packet
-        hdr_len = b'\x0A' # 10
-        flags = b'\x01' # CRC OK
+        pkt_type = b'\x06'
+        hdr_len = b'\x0A'
+        flags = b'\x01'
         rf_ch = bytes([37])
         rssi_magnitude = bytes([55]) # -55 dBm
         evt_cnt = struct.pack('<H', 1)
@@ -353,21 +352,62 @@ class TestCombinedRIDListener(unittest.TestCase):
         nordic_hdr = board + pkt_len + ver + cnt + pkt_type + hdr_len + flags + rf_ch + rssi_magnitude + evt_cnt + delta_t
         self.assertEqual(len(nordic_hdr), 17)
         
-        # Access Address: 0x8E89BED6
         access_addr = b'\xd6\xbe\x89\x8e'
-        # PDU Header: ADV_EXT_IND (0x07)
-        pdu_hdr = b'\x07\x10'
-        # Extended Header with AdvA MAC: CD:57:9B:8E:EB:AB
-        mac_bytes_le = bytes.fromhex("ABEB8E9B57CD")
-        ext_hdr = b'\x08\x09\x09' + mac_bytes_le
+        pdu_hdr = b'\x07\x10' # ADV_EXT_IND / AUX_ADV_IND (0x07)
         
-        full_packet = nordic_hdr + access_addr + pdu_hdr + ext_hdr
+        # 1. Test Extended Header with AdvA + ADI (ext_hdr_len=9, flags=0x09: AdvA(bit0) | ADI(bit3))
+        mac_bytes_le = bytes.fromhex("ABEB8E9B57CD") # CD:57:9B:8E:EB:AB
+        adi_bytes = b'\x12\x34'
+        ext_hdr_adva_adi = bytes([0x09, 0x09]) + mac_bytes_le + adi_bytes
         
+        full_packet = nordic_hdr + access_addr + pdu_hdr + ext_hdr_adva_adi
         pdu_type_str, mac_addr, rssi_dbm, ch = parse_packet_metadata(full_packet)
         self.assertEqual(pdu_type_str, "ADV_EXT_IND/AUX_ADV_IND")
         self.assertEqual(mac_addr, "CD:57:9B:8E:EB:AB")
-        self.assertEqual(rssi_dbm, -55) # Verified NOT misidentified as -92 from length 0xA4
+        self.assertEqual(rssi_dbm, -55)
         self.assertEqual(ch, 37)
+
+        # 2. Test Extended Header without AdvA (e.g. primary ADV_EXT_IND with only AuxPtr: flags=0x10)
+        ext_hdr_aux_only = bytes([0x04, 0x10]) + b'\x01\x02\x03'
+        full_pkt_no_adva = nordic_hdr + access_addr + pdu_hdr + ext_hdr_aux_only
+        pdu_type_str, mac_addr, rssi_dbm, ch = parse_packet_metadata(full_pkt_no_adva)
+        self.assertEqual(pdu_type_str, "ADV_EXT_IND/AUX_ADV_IND")
+        self.assertEqual(mac_addr, "UNKNOWN")
+
+    def test_ble5_extended_header_and_rid_extraction(self):
+        from evaluation.nrf_bt_sniffer_json import extract_remote_id_info, parse_packet_metadata
+        # Test full end-to-end BLE 5 extended frame with AdvA and ASTM Remote ID Service Data
+        # MAC: F1:D4:C5:1A:31:5A
+        mac_bytes_le = bytes.fromhex("5A311AC5D4F1")
+        # Extended Header: ext_hdr_len=9, flags=0x09 (AdvA + ADI)
+        ext_hdr = bytes([0x09, 0x09]) + mac_bytes_le + b'\x99\x77'
+        
+        # Build ASTM Basic ID message: "Spoofed_Serial_25492" (20 bytes)
+        serial_str = b"Spoofed_Serial_25492"
+        basic_id_msg = bytes([0x02, 0x12]) + serial_str + b'\x00\x00\x00' # 25 bytes
+        
+        # AD Structure: Length(1B), Type(0x16 Service Data), UUID(0xFA 0xFF), AppCode(0x0D), Counter(42), Msg(25B)
+        svc_payload = bytes([0x0D, 42]) + basic_id_msg
+        ad_struct = bytes([len(svc_payload) + 3, 0x16, 0xFA, 0xFF]) + svc_payload
+        
+        access_addr = b'\xd6\xbe\x89\x8e'
+        pdu_hdr = bytes([0x07, len(ext_hdr) + len(ad_struct)])
+        
+        nordic_hdr = b'\x00' * 9 + bytes([37, 60]) + b'\x00' * 6 # RSSI=-60, Ch=37
+        full_packet = nordic_hdr + access_addr + pdu_hdr + ext_hdr + ad_struct
+        
+        pdu_type, mac, rssi, ch = parse_packet_metadata(full_packet)
+        self.assertEqual(mac, "F1:D4:C5:1A:31:5A")
+        
+        rid_info = extract_remote_id_info(full_packet, pdu_type)
+        self.assertIsNotNone(rid_info)
+        self.assertEqual(rid_info["transport"], "ble5_extended")
+        self.assertEqual(rid_info["counter"], 42)
+        parsed = rid_info["parsed_messages"]
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["type"], "Basic ID")
+        self.assertEqual(parsed[0]["id"], "Spoofed_Serial_25492")
+        self.assertNotIn("toofed", parsed[0]["id"])
 
     def test_wifi_sniffer_frame_processing(self):
         # Construct realistic Wi-Fi 802.11 Beacon frame with Radiotap header
