@@ -302,8 +302,15 @@ def cmd_export_geojson(args):
 
 
 # ============================================================================
-# Command: export-csv
-# ============================================================================
+def sanitize_csv_cell(val: Any) -> Any:
+    """
+    Neutralize spreadsheet formula macro injection (ANDR-01, RDBP-03).
+    Prepends a single quote if a text value starts with =, +, -, @, \\t, or \\r.
+    """
+    if isinstance(val, str) and val and val[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return f"'{val}"
+    return val
+
 
 def cmd_export_csv(args):
     conn = get_db_connection(args.db)
@@ -331,11 +338,11 @@ def cmd_export_csv(args):
 
     out_path = args.output or f"{row['encounter_id']}.csv"
     with open(out_path, "w", newline="") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
         writer.writerow(["index", "timestamp_epoch", "latitude", "longitude", "altitude_m", "speed_mps", "heading_deg"])
         for idx, pt in enumerate(traj):
             # pt: [lat, lon, alt, speed, heading, ts]
-            writer.writerow([idx, pt[5], pt[0], pt[1], pt[2], pt[3], pt[4]])
+            writer.writerow([idx, sanitize_csv_cell(pt[5]), pt[0], pt[1], pt[2], pt[3], pt[4]])
 
     print(f"{C_GREEN}[+] Successfully exported CSV trajectory ({len(traj)} points) to {out_path}{C_RESET}")
 

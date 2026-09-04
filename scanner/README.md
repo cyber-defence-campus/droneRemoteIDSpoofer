@@ -80,9 +80,17 @@ The scanner implements an optimized ASTM F3411 hopping sequence ensuring regular
   - **Social Channel (1 Hz Dwell)**: Channel `149` $\to$ **1000 ms**
   - **Non-Social Channels (5 Hz Dwell)**: Channels `153, 157, 161, 165, 169, 173` $\to$ **200 ms** each
 
-### Switching Latency Overhead
-- **Intraband Switching Delay**: `30 ms` (e.g. $2.4\text{ GHz} \to 2.4\text{ GHz}$ or $5.8\text{ GHz} \to 5.8\text{ GHz}$)
-- **Interband Switching Delay**: `50 ms` (e.g. $2.4\text{ GHz} \to 5.8\text{ GHz}$ or $5.8\text{ GHz} \to 2.4\text{ GHz}$)
+### Switching Latency Overhead & Tunability
+- **Intraband Switching Delay (Default: `30 ms`)**: Delay when hopping within the same band (e.g. $2.4\text{ GHz} \to 2.4\text{ GHz}$ or $5.8\text{ GHz} \to 5.8\text{ GHz}$).
+- **Interband Switching Delay (Default: `50 ms`)**: Delay when crossing frequency bands (e.g. $2.4\text{ GHz} \to 5.8\text{ GHz}$ or $5.8\text{ GHz} \to 2.4\text{ GHz}$).
+
+> [!NOTE]
+> **Switching Latency is an Empirical Estimate**:
+> Exact channel switching latency varies across Wi-Fi chipsets (e.g. RTL8812AU vs MT7921 vs AR9271), Linux wireless drivers, and USB bus overhead. The default values (`30 ms` intraband, `50 ms` interband) are conservative baseline estimates and are **fully configurable via CLI flags**:
+> - `--intraband-delay-ms <ms>` (e.g. `--intraband-delay-ms 20`)
+> - `--interband-delay-ms <ms>` (e.g. `--interband-delay-ms 40`)
+> - `--social-dwell-ms <ms>` (default `1000`)
+> - `--non-social-dwell-ms <ms>` (default `200`)
 
 ### Configurable $2k:k$ Ratio (Default $k=1$)
 In every cycle, the hopper sweeps:

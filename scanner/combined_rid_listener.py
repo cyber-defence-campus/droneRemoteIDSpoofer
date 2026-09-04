@@ -197,6 +197,25 @@ EU_CLASS_NAMES = {
 }
 
 
+def sanitize_ascii_string(raw: bytes, max_len: int = 25) -> str:
+    """
+    Sanitize untrusted over-the-air ASCII string bytes:
+    1. Truncates at first null byte (0x00).
+    2. Strips all non-printable ASCII control characters (0x00-0x1F, 0x7F, ANSI ESC \x1b)
+       to prevent terminal escape injection (DA-03).
+    3. Retains only safe printable characters (0x20 to 0x7E).
+    """
+    cleaned = []
+    for b in raw[:max_len]:
+        if b == 0:
+            break
+        if 0x20 <= b <= 0x7E:
+            cleaned.append(chr(b))
+        else:
+            cleaned.append('?')  # Replace non-printable / control codes
+    return ''.join(cleaned).strip()
+
+
 def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
     """
     Decode a single 25-byte ASTM F3411 / OpenDroneID message block with full subparts,
@@ -223,7 +242,7 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
             id_type_raw = block[1]
             id_type = (id_type_raw >> 4) & 0x0F
             ua_type = id_type_raw & 0x0F
-            uas_id = block[2:22].decode('ascii', errors='ignore').rstrip('\x00')
+            uas_id = sanitize_ascii_string(block[2:22], max_len=20)
             result.update({
                 "id": uas_id,
                 "id_type": id_type,
@@ -345,7 +364,7 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
 
         elif msg_type == 0x3:  # Self-ID (Type 3)
             desc_type = block[1]
-            desc = block[2:25].decode('ascii', errors='ignore').rstrip('\x00')
+            desc = sanitize_ascii_string(block[2:25], max_len=23)
             result.update({
                 "desc_type": desc_type,
                 "desc_type_name": DESC_TYPE_NAMES.get(desc_type, f"Reserved ({desc_type})"),
@@ -404,7 +423,7 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
 
         elif msg_type == 0x5:  # Operator ID (Type 5)
             op_id_type = block[1]
-            op_id = block[2:22].decode('ascii', errors='ignore').rstrip('\x00')
+            op_id = sanitize_ascii_string(block[2:22], max_len=20)
             result.update({
                 "operator_id_type": op_id_type,
                 "operator_id_type_name": "Operator ID" if op_id_type == 0 else f"Reserved ({op_id_type})",
@@ -419,7 +438,10 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
 
 def parse_astm_payload(payload: bytes) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
-    Parse ASTM F3411 payload bytes.
+    Parse ASTM F3411 payload bytes with strict bounds and dimensions validation.
+    Hardened against:
+      - DA-01: Zero-length / malformed message packs & recursive sub-packs
+      - RDBP-02: Buffer over-read on truncated packet frames
     Returns:
       - results: List of decoded message dicts
       - raw_b64_blocks: List of 25-byte base64-encoded strings (for replay_drones.py)
@@ -427,34 +449,57 @@ def parse_astm_payload(payload: bytes) -> Tuple[List[Dict[str, Any]], List[str]]
     results = []
     raw_b64_blocks = []
     i = 0
-    while i < len(payload):
-        msg_type = (payload[i] >> 4) & 0x0F
+    total_len = len(payload)
+
+    while i < total_len:
+        if i >= total_len:
+            break
+
+        header = payload[i]
+        msg_type = (header >> 4) & 0x0F
+
         if msg_type == 0xF:  # Message Pack
-            if i + 3 > len(payload):
+            # Validate pack header structure: at least 3 bytes (Header, SingleMessageSize, MsgPackSize)
+            if i + 3 > total_len:
                 break
+
             msg_size = payload[i + 1]
             msg_count = payload[i + 2]
+
+            # ASTM F3411 Specification: msg_size MUST be 25 (0x19) and msg_count MUST be 1..9
+            if msg_size != 25 or msg_count == 0 or msg_count > 9:
+                # Malformed pack header -> terminate parsing to prevent index desynchronization
+                break
+
+            expected_pack_bytes = 3 + (msg_count * 25)
+            if i + expected_pack_bytes > total_len:
+                # Truncated pack payload -> do not process partial/corrupted pack
+                break
+
             i += 3
             for _ in range(msg_count):
-                if i + 25 <= len(payload):
-                    chunk = payload[i:i + 25]
+                chunk = payload[i : i + 25]
+                # Reject nested / recursive message packs (DA-01)
+                sub_msg_type = (chunk[0] >> 4) & 0x0F
+                if sub_msg_type != 0xF:
                     decoded = decode_astm_message(chunk)
                     if decoded:
                         results.append(decoded)
                     raw_b64_blocks.append(base64.b64encode(chunk).decode('ascii'))
-                    i += 25
-                else:
-                    break
+                i += 25
+
         else:  # Single message block
-            if i + 25 <= len(payload):
-                chunk = payload[i:i + 25]
+            if i + 25 <= total_len:
+                chunk = payload[i : i + 25]
                 decoded = decode_astm_message(chunk)
                 if decoded:
                     results.append(decoded)
                 raw_b64_blocks.append(base64.b64encode(chunk).decode('ascii'))
                 i += 25
             else:
+                # Trailing bytes < 25 bytes cannot form a valid message
                 break
+
     return results, raw_b64_blocks
 
 
@@ -1445,8 +1490,8 @@ def main():
                         help="Non-social channel ratio multiplier k (cycles 2k non-social on 2.4GHz for every k on 5.8GHz)")
     parser.add_argument("--social-dwell-ms", type=int, default=1000, help="Social channel dwell time in milliseconds (1 Hz)")
     parser.add_argument("--non-social-dwell-ms", type=int, default=200, help="Non-social channel dwell time in milliseconds (5 Hz)")
-    parser.add_argument("--intraband-delay-ms", type=int, default=30, help="Intraband channel switching delay in milliseconds")
-    parser.add_argument("--interband-delay-ms", type=int, default=50, help="Interband channel switching delay in milliseconds")
+    parser.add_argument("--intraband-delay-ms", type=int, default=30, help="Intraband channel switching delay in ms (empirical estimate, configurable for Wi-Fi chipset/driver)")
+    parser.add_argument("--interband-delay-ms", type=int, default=50, help="Interband channel switching delay in ms (empirical estimate, configurable for Wi-Fi chipset/driver)")
 
     # BLE Options
     parser.add_argument("--coded", action="store_true", help="Enable Bluetooth 5 Long Range (LE Coded PHY) scanning")

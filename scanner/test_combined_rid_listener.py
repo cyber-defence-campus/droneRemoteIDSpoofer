@@ -235,6 +235,47 @@ class TestCombinedRIDListener(unittest.TestCase):
         self.assertEqual(decoded["timestamp_s"], 123.4)
         self.assertEqual(decoded["timestamp_accuracy_name"], "< 0.2 s")
 
+    def test_security_malformed_message_packs(self):
+        # 1. Zero msg_count in message pack (DA-01)
+        zero_pack = bytes([0xF2, 0x19, 0x00])
+        parsed, raw_b64 = parse_astm_payload(zero_pack)
+        self.assertEqual(len(parsed), 0)
+
+        # 2. Invalid msg_size != 25 (e.g. msg_size = 50)
+        invalid_size_pack = bytes([0xF2, 50, 0x01]) + (b"\x00" * 50)
+        parsed, raw_b64 = parse_astm_payload(invalid_size_pack)
+        self.assertEqual(len(parsed), 0)
+
+        # 3. Excessive msg_count > 9 (e.g. msg_count = 20)
+        excess_pack = bytes([0xF2, 0x19, 20]) + (b"\x00" * 500)
+        parsed, raw_b64 = parse_astm_payload(excess_pack)
+        self.assertEqual(len(parsed), 0)
+
+        # 4. Truncated pack (header says count=2, but buffer only has 1 message)
+        truncated_pack = bytes([0xF2, 0x19, 0x02]) + (b"\x00" * 25)
+        parsed, raw_b64 = parse_astm_payload(truncated_pack)
+        self.assertEqual(len(parsed), 0)
+
+    def test_security_terminal_ansi_escape_sanitization(self):
+        # DA-03: String containing ANSI escape sequences (\x1b[2J) and non-printable control chars (\x07)
+        malicious_serial = b"\x1b[2J\x1b[HATTACKER_ID\x07\x00"
+        block = bytes([0x02, 0x12]) + malicious_serial.ljust(20, b'\x00') + b'\x00\x00\x00'
+        decoded = decode_astm_message(block)
+        self.assertIsNotNone(decoded)
+        # Verify ANSI control chars were neutralized
+        self.assertNotIn("\x1b", decoded["id"])
+        self.assertNotIn("\x07", decoded["id"])
+        self.assertIn("ATTACKER_ID", decoded["id"])
+
+    def test_security_csv_formula_injection(self):
+        # ANDR-01 / RDBP-03: Cell starting with formula operator
+        from scanner.query_rid_db import sanitize_csv_cell
+        self.assertEqual(sanitize_csv_cell("=cmd|' /C calc'!A0"), "'=cmd|' /C calc'!A0")
+        self.assertEqual(sanitize_csv_cell("+12345"), "'+12345")
+        self.assertEqual(sanitize_csv_cell("-12345"), "'-12345")
+        self.assertEqual(sanitize_csv_cell("@SUM(A1:A10)"), "'@SUM(A1:A10)")
+        self.assertEqual(sanitize_csv_cell("NORMAL_TEXT"), "NORMAL_TEXT")
+
     def test_schedule_coverage(self):
         # Verify that with k=1 (2 in 2.4G, 1 in 5.8G), 6 cycles cover all 12 2.4G non-social and all 6 5.8G non-social channels
         k = 1
