@@ -276,6 +276,7 @@ Each drone can have its own mode (`random`, `static`, `waypoints`), serial, MAC,
 
 ## Credits
 
+- David Wilhelmy, ETH
 - Fabia Müller, Zurich University of Applied Sciences
 - Sebastian Brunner,Zurich University of Applied Sciences
 - Llorenç Romá, Cyber-Defence Campus
