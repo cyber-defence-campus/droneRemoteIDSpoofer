@@ -8,7 +8,7 @@ It generates raw 802.11 beacon frames and BLE advertisements containing ASTM F34
 
 ### Features
 
-- **Multi-transport** — Wi-Fi beacon frames and BLE advertisements, individually or simultaneously
+- **Multi-transport** — Wi-Fi beacon frames, BLE advertisements, and Wi-Fi NAN (Aware), individually or simultaneously
 - **Multi-drone** — spoof several DroneIDs at once, each with unique serial, MAC, and flight behavior
 - **Flight modes** — random walk, static position, or predefined waypoint paths
 - **Scenario configs** — define multi-drone scenarios in JSON (10+ ready-to-use examples included)
@@ -31,6 +31,8 @@ It generates raw 802.11 beacon frames and BLE advertisements containing ASTM F34
 |-----------|----------|----------|
 | **Wi-Fi** | 802.11 adapter supporting monitor mode | Linux, root, `scapy` |
 | **BLE**   | Bluetooth adapter (HCI) | Linux, root |
+| **NAN (Manual)** | 802.11 adapter supporting monitor mode | Linux, root, direct raw injection (no phone required) |
+| **NAN (Bridge)** | Android device with Wi-Fi Aware | Android App (`NaN_Bridge`), ADB |
 
 ### Install
 
@@ -51,6 +53,30 @@ sudo ./interface-monitor.sh <interface-name>
 sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
 ```
 
+> **Important — Legal Compliance & Wi-Fi Regulatory Domain**
+>
+> When conducting wireless experiments, **users are solely responsible for ensuring all transmissions strictly comply with local telecommunications, radio spectrum, and aviation regulations.**
+>
+> On Linux, the wireless regulatory domain enforces the legal frequency bands, authorized channels, and maximum transmit power (EIRP) limits for your physical location:
+> - **Always set the regulatory domain to match your actual geographic jurisdiction**:
+>   ```bash
+>   sudo iw reg set <YOUR-LOCAL-COUNTRY-CODE>   # e.g., CH (Switzerland), DE (Germany), US, etc.
+>   ```
+> - **Do NOT set an arbitrary or foreign regulatory domain** simply to circumvent local frequency restrictions, radar detection (DFS) rules, or transmission bans on specific channels (such as 5.8 GHz channels 149–165). Transmitting on unauthorized frequencies or exceeding local power limits violates national radio laws.
+> - You can verify your active channel permissions, DFS requirements, and power limits at any time using `iw reg get`.
+
+> **Tip — tab-completion & interactive picker**
+>
+> Run without arguments to get an interactive interface picker with state/driver/MAC info:
+> ```bash
+> sudo ./interface-monitor.sh
+> ```
+> To enable persistent **tab-completion** for interface names and Wi-Fi channels across reboots and new shell sessions, install it once:
+> ```bash
+> ./interface-monitor.sh --install-completion
+> ```
+> Automatically loads in new terminals for `./interface-monitor.sh`, `interface-monitor.sh`, and `sudo ./interface-monitor.sh`.
+
 **BLE** — make sure your adapter is up:
 ```bash
 sudo rfkill unblock all
@@ -61,6 +87,25 @@ sudo .venv/bin/python3 spoof_drones.py -t ble --ble-adapter hci0
 **Both at once:**
 ```bash
 sudo .venv/bin/python3 spoof_drones.py -i wlan1 -t both --ble-adapter hci0
+```
+
+**Wi-Fi NAN (Wi-Fi Aware):**
+
+*Option A — Direct Linux Raw Packet Injection (Manual Mode - No Android device required):*
+Injects IEEE 802.11 Wi-Fi Aware Action Frames and Discovery Beacons directly from a monitor mode interface:
+```bash
+sudo .venv/bin/python3 spoof_drones.py -t nan --nan-mode manual -i wlan1
+```
+
+*Option B — Android Bridge App (Bridge Mode):*
+1. Install and run the `NaN_Bridge` app on an Android device supporting Wi-Fi Aware.
+2. Connect device via ADB and forward the TCP port:
+```bash
+adb forward tcp:8080 tcp:8080
+```
+3. Run the spoofer with `nan` transport in bridge mode:
+```bash
+python3 spoof_drones.py -t nan --nan-mode bridge --nan-port 8080
 ```
 
 You should see the spoofed drone appear on any RID receiver within range.
@@ -156,16 +201,38 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `-l` | `--location` | `lat lng` | config or Zurich | Base coordinates (decimal degrees) |
 | `-c` | `--config` | `path` | - | Path to scenario JSON config |
 | `-v` | `--verbose` | - | - | Enable debug logging |
-| `-t` | `--transport` | `wifi\|ble\|both` | config or `wifi` | Transport backend |
+| `-t` | `--transport` | `wifi\|ble\|nan\|both\|all` | config or `wifi` | Transport backend |
+| | `--no-self-id` | - | - | Omit Self ID payload to optimize frame airtime |
 | | `--ble-adapter` | `str` | config or `hci0` | BLE HCI adapter name |
 | | `--ble-interval` | `int` | `200` | BLE 4 legacy advertising interval (ms) |
 | | `--ble-extended-interval` | `int` | same as legacy | BLE 5 extended advertising interval (ms) |
-| | `--ble-extended` | - | - | Enable BLE 5 Extended Advertising (Coded PHY) |
+| | `--ble-mode` | `extended\|ext-legacy\|legacy\|dual` | `extended` | BLE transmission mode (`extended`=Coded PHY, `ext-legacy`=BLE4 via Ext HCI, `legacy`=classic HCI, `dual`=both) |
 | | `--wifi-channel`| `int` | config or `6` | Wi-Fi channel for injection |
-| | `--wifi-ess`    | - | - | Set ESS capability (make beacon look like an AP) |
+| | `--wifi-ess` | - | - | Set ESS capability (make beacon look like an AP) |
 | | `--wifi-beacon-interval` | `float` | config or `0.1024` | Wi-Fi beacon transmission interval in seconds |
+| | `--nan-mode` | `bridge\|manual` | config or `bridge` | NAN mode: Android TCP bridge or direct Linux raw injection |
+| | `--nan-port` | `int` | config or `8080` | TCP port for the NAN Android Bridge |
+| | `--nan-cluster-id` | `str` | `50:6f:9a:01:00:00` | NAN Cluster BSSID MAC for manual injection |
+| | `--nan-instance-id` | `int/hex` | `0x10` | NAN Service Instance ID for manual injection |
 
 CLI flags override values from scenario config files.
+
+---
+
+## Advanced Security Research & Evaluation Suite
+
+In addition to `spoof_drones.py`, the repository includes specialized security evaluation, fuzzing, scanning, and takeover modules:
+
+- **Combined Remote ID Sniffer & DB Logger (`scanner/`)**: Real-time simultaneous Wi-Fi Beacon and BLE sniffer with live curses telemetry dashboard, message pack parser, SQLite database logging (`rid_capture.db`), and CLI query tool (`query_rid_db.py`). See [scanner/README.md](scanner/README.md).
+- **Capacity & RF Benchmarking Suite (`evaluation/`)**: Automated multi-mode benchmark orchestrator (`run_ble_benchmark.py`), high-speed raw socket Wi-Fi sniffer (`wifi_capacity.py`), and BLE capacity tester (`ble_capacity.py`) with publication-ready plotting scripts.
+- **Receiver Vulnerability PoCs (`experiments/`)**: Targeted proof-of-concept injection and fuzzing scripts evaluating parser vulnerabilities and web UI flaws across specific receiver hardware/apps (DroneAware, DroneScout, SkySpy, Sparrow).
+- **Ephemeral Swarm (`ephemeral_swarm.py`)**: High-density identity rotation and multi-transport saturation testing across Wi-Fi, BLE, and NAN.
+- **OTA Fuzzing Suite (`fuzz_rid.py`)**: Automated fuzzing suite for testing receiver resilience against malformed ASTM payloads, XSS/command injection strings, and pagination buffer overflows.
+- **Airborne Takeover (`takeover_figure8.py` & `takeover_predictive.py`)**: Real-time drone duplication, takeover simulation, and predictive trajectory hiding overlays.
+- **PCAP Replay Engine (`replay/replay_drones.py`)**: Replay captured raw 802.11 / BLE Remote ID telemetry from PCAP recordings.
+- **Wi-Fi CTS Jammer (`evaluation/cts_inject`)**: C-based NAV duration CTS reservation tool to evaluate channel contention under jamming.
+
+For comprehensive experiment workflows, parameter guides, and command examples, see the [EXPERIMENT_GUIDE.md](EXPERIMENT_GUIDE.md).
 
 ---
 

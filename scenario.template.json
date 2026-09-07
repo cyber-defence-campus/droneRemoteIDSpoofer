@@ -3,33 +3,43 @@
     "interface": "wlan1",
     "interval": 1.0,
     "location": [47.3763399, 8.5312562],
-    "random": 1,
     "transport": "wifi",
+    "wifi": {
+      "channel": 6,
+      "beacon_interval": 0.1024,
+      "ess": false
+    },
     "ble": {
       "adapter": "hci0",
       "advertising_interval_ms": 200,
-      "extended_interval_ms": 800,
-      "extended": false
+      "extended_interval_ms": 200,
+      "extended": true
+    },
+    "nan": {
+      "mode": "manual",
+      "cluster_id": "50:6f:9a:01:00:00",
+      "instance_id": "0x10"
     }
   },
   "drones": [
     {
       "mode": "random",
       "serial": "Spoofed_Serial_00001",
-      "mac": "aa:bb:cc:dd:ee:ff",
+      "mac": "fe:19:f1:61:3e:61",
+      "ble_mac": "f8:23:56:a9:40:e9",
       "start_location": [47.3764, 8.5313],
       "pilot_location": [47.3762, 8.5311],
       "lifespan_seconds": 30,
-      "timestamp_offset_minutes": -2,
-      "speed": 12.5,
-      "vertical_speed": -1.0,
-      "geodetic_altitude": 120.0,
-      "pressure_altitude": 118.0,
-      "height": 60.0
+      "timestamp_offset_minutes": -2
     },
     {
       "mode": "waypoints",
+      "serial": "Spoofed_Serial_00002",
       "transport": "ble",
+      "start_location": [47.3764, 8.5313],
+      "speed": 10.0,
+      "geodetic_altitude": 100.0,
+      "height": 50.0,
       "waypoints": [
         [47.3764, 8.5313, 2],
         [47.3766, 8.5316, 2],
@@ -37,7 +47,11 @@
       ]
     },
     {
-      "mode": "static"
+      "mode": "static",
+      "serial": "Spoofed_Serial_00003",
+      "start_location": [47.3765, 8.5315],
+      "geodetic_altitude": 50.0,
+      "height": 20.0
     }
   ]
 }

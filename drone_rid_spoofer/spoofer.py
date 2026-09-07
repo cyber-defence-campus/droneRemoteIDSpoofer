@@ -40,11 +40,13 @@ class DroneSpoofer:
         level = logging.DEBUG if getattr(self.args, 'verbose', False) else logging.INFO
         logging.getLogger().setLevel(level)
 
-    def _send(self, drone: DroneState) -> None:
-        """Build messages and send via all backends."""
-        messages = build_all_messages(drone)
-        for backend in self.backends:
-            backend.send_messages(drone, messages)
+    def _get_packet_builder(self):
+        """Return a callable that generates ASTM messages for a drone."""
+        return lambda drone: build_all_messages(
+            drone,
+            omit_self_id=getattr(self.args, 'no_self_id', False),
+            omit_operator_id=getattr(self.args, 'no_operator_id', False)
+        )
 
     def run_manual_mode(self) -> None:
         """Run controlled drone spoofing with keyboard input."""
@@ -66,6 +68,10 @@ class DroneSpoofer:
         next_send = datetime.now()
         stdin_fd = sys.stdin.fileno()
         original_settings = termios.tcgetattr(stdin_fd)
+        
+        builder = self._get_packet_builder()
+        for backend in self.backends:
+            backend.start([drone], builder)
 
         try:
             tty.setcbreak(stdin_fd)
@@ -80,10 +86,9 @@ class DroneSpoofer:
                     key = sys.stdin.read(1)
                     self._process_movement_key(drone, key)
                 
-                # 2. Transmit at the configured interval
+                # 2. Advance deadline for next tick
                 if now >= next_tick:
-                    self._send(drone)
-                    logger.info(f"Sent packet for {drone.serial.decode()}")
+                    logger.debug(f"Tick for {drone.serial.decode()}")
                     
                     # Schedule next tick
                     next_tick += interval
@@ -204,9 +209,6 @@ class DroneSpoofer:
             mac_addr = entry.get("mac") or generate_wifi_mac()
             ble_addr = entry.get("ble_mac") or generate_ble_mac()
             lifespan_seconds = entry.get("lifespan_seconds", 0)
-            end_time = None
-            if lifespan_seconds and lifespan_seconds > 0:
-                end_time = datetime.now() + timedelta(seconds=lifespan_seconds)
 
             drone_transport = entry.get("transport")
             timestamp_offset = entry.get("timestamp_offset_minutes", 0.0)
@@ -219,7 +221,7 @@ class DroneSpoofer:
                 mac_address=mac_addr,
                 ble_address=ble_addr,
                 mode=mode,
-                end_time=end_time,
+                lifespan_seconds=float(lifespan_seconds),
                 waypoints=waypoints,
                 transport=drone_transport,
                 timestamp_offset=float(timestamp_offset),
@@ -238,6 +240,17 @@ class DroneSpoofer:
 
     def _run_automatic_loop(self, drones: List[DroneState]) -> None:
         interval = float(self.args.interval)
+        
+        # Initialize end_time for all drones based on when the loop actually starts
+        loop_start_time = datetime.now()
+        for drone in drones:
+            if getattr(drone, 'lifespan_seconds', 0) > 0:
+                drone.end_time = loop_start_time + timedelta(seconds=drone.lifespan_seconds)
+                
+        builder = self._get_packet_builder()
+        for backend in self.backends:
+            backend.start(drones, builder)
+                
         next_tick = time.time()
         packet_batch_count = 0
 
@@ -252,6 +265,8 @@ class DroneSpoofer:
                         if drone.active:
                             logger.info(f"Drone {drone.serial.decode()} expired; stopping transmission")
                             drone.active = False
+                            for backend in self.backends:
+                                backend.remove_drone(drone)
                         continue
                     if not drone.active:
                         continue
@@ -262,14 +277,12 @@ class DroneSpoofer:
                         drone.drift_kinematics()
                     elif drone.mode == "waypoints":
                         self._update_waypoints(drone, dt_now)
-                    
-                    self._send(drone)
 
                 packet_batch_count += 1
                 logger.info(f"Sent batch {packet_batch_count} ({active_count} active drones)")
                 
-                if active_count == 0 and any(d.end_time for d in drones):
-                    logger.info("All drones expired; stopping automatic mode")
+                if active_count == 0:
+                    logger.info("No active drones remaining; stopping automatic mode")
                     break
                     
                 # 2. Advance deadline for next batch
@@ -326,4 +339,6 @@ class DroneSpoofer:
             drone.lng = lng
             drone.next_waypoint_time = now + timedelta(seconds=hold)
         else:
-            drone.next_waypoint_time = now + timedelta(seconds=3600)
+            if drone.active:
+                logger.info(f"Drone {drone.serial.decode()} reached its final waypoint. Stopping transmission.")
+                drone.active = False

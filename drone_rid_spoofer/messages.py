@@ -112,9 +112,9 @@ def build_operator_id(protocol_version: int = 2) -> bytes:
     return bytes([(MsgType.OPERATOR_ID << 4) | protocol_version]) + b'\x00' * 24
 
 
-def build_all_messages(drone: DroneState, protocol_version: int = 2) -> List[bytes]:
+def build_all_messages(drone: DroneState, protocol_version: int = 2, omit_self_id: bool = False, omit_operator_id: bool = False) -> List[bytes]:
     """Build all ASTM message payloads for a drone."""
-    return [
+    msgs = [
         build_basic_id(drone.serial, protocol_version=protocol_version),
         build_location_vector(
             drone.lat, drone.lng, drone.direction,
@@ -126,7 +126,10 @@ def build_all_messages(drone: DroneState, protocol_version: int = 2) -> List[byt
             timestamp_offset=drone.timestamp_offset,
             protocol_version=protocol_version
         ),
-        build_self_id(protocol_version=protocol_version),
-        build_system(drone.pilot_location[0], drone.pilot_location[1], protocol_version=protocol_version),
-        build_operator_id(protocol_version=protocol_version),
     ]
+    if not omit_self_id:
+        msgs.append(build_self_id(protocol_version=protocol_version))
+    msgs.append(build_system(drone.pilot_location[0], drone.pilot_location[1], protocol_version=protocol_version))
+    if not omit_operator_id:
+        msgs.append(build_operator_id(protocol_version=protocol_version))
+    return msgs

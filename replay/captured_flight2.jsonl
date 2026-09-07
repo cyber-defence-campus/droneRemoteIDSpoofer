@@ -1,0 +1,155 @@
+{"time_offset_ms": 12922, "transport": "bt4", "counter": 1, "messages_b64": ["EiAABghnnT0crGMWBUcKOgooCAAAGg4AAA=="], "mac": "E3:14:9B:34:01:03"}
+{"time_offset_ms": 13893, "transport": "bt4", "counter": 5, "messages_b64": ["EiAADAfylz0cSWMWBUMKRAomCAAAJA4AAA=="], "mac": "E3:14:9B:34:01:03"}
+{"time_offset_ms": 15105, "transport": "bt4", "counter": 10, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 17125, "transport": "bt4", "counter": 18, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 17699, "transport": "bt4", "counter": 20, "messages_b64": ["EiAACQc3nT0c16EWBToKSwokCAAATA4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 18309, "transport": "bt4", "counter": 23, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 18723, "transport": "bt4", "counter": 24, "messages_b64": ["EiAAAwbKmD0cknwWBTsKTgojCAAAVg4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 19340, "transport": "bt4", "counter": 27, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 19697, "transport": "bt4", "counter": 28, "messages_b64": ["EiAABAavtj0crqEWBUMKUQojCAAAYA4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 20725, "transport": "bt4", "counter": 32, "messages_b64": ["EiAABQTHxz0ccrMWBUAKUAopCAAAag4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 20908, "transport": "bt4", "counter": 33, "messages_b64": ["EiAABQTHxz0ccrMWBUAKUAopCAAAag4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 22107, "transport": "bt4", "counter": 38, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 23114, "transport": "bt4", "counter": 42, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 23309, "transport": "bt4", "counter": 43, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 24107, "transport": "bt4", "counter": 46, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 24704, "transport": "bt4", "counter": 48, "messages_b64": ["EiAACAX3Bj4cdoYWBU0KSwo6CAAAkg4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 25308, "transport": "bt4", "counter": 51, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 26311, "transport": "bt4", "counter": 55, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 26733, "transport": "bt4", "counter": 56, "messages_b64": ["EiAAAgdjCT4cPK8WBUgKTAo8CAAApg4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 27331, "transport": "bt4", "counter": 59, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 27731, "transport": "bt4", "counter": 60, "messages_b64": ["EiAABgW/Ij4ck7cWBVEKVQo3CAAAsA4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 27938, "transport": "bt4", "counter": 61, "messages_b64": ["EiAABgW/Ij4ck7cWBVEKVQo3CAAAsA4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 28929, "transport": "bt4", "counter": 65, "messages_b64": ["EiAACwaKPz4cCJYWBUgKTwo6CAAAug4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 31109, "transport": "bt4", "counter": 74, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 31896, "transport": "bt4", "counter": 77, "messages_b64": ["EiAADAb6TT4cGGAWBUgKWApDCAAA2A4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 32135, "transport": "bt4", "counter": 78, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 32340, "transport": "bt4", "counter": 79, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 32709, "transport": "bt4", "counter": 80, "messages_b64": ["EiAACQYfLT4c+FoWBUsKUgo8CAAA4g4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 33333, "transport": "bt4", "counter": 83, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 33700, "transport": "bt4", "counter": 84, "messages_b64": ["EiAACAdTJj4cBEoWBVIKSwpCCAAA7A4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 34697, "transport": "bt4", "counter": 88, "messages_b64": ["EiAABQebFj4cVzgWBU0KSgpGCAAA9g4AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 35904, "transport": "bt4", "counter": 93, "messages_b64": ["EiAABwbk9z0ci1gWBUgKSApFCAAAAA8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 37116, "transport": "bt4", "counter": 98, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 39105, "transport": "bt4", "counter": 106, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 40108, "transport": "bt4", "counter": 110, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 41315, "transport": "bt4", "counter": 115, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 41703, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAEwqfBT4c/E8WBV0KRgo5CAAAPA8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 42709, "transport": "bt4", "counter": 120, "messages_b64": ["EiAAEAlN/D0c8GAWBVkKSApACAAARg8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 43140, "transport": "bt4", "counter": 122, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 44112, "transport": "bt4", "counter": 126, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 45137, "transport": "bt4", "counter": 130, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 46097, "transport": "bt4", "counter": 134, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 46712, "transport": "bt4", "counter": 136, "messages_b64": ["EiAACAq65z0c4iMWBU4KQApLCAAAbg8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 47308, "transport": "bt4", "counter": 139, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 47700, "transport": "bt4", "counter": 140, "messages_b64": ["EiAACgj+0T0cSkkWBUcKQgpTCAAAeA8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 48307, "transport": "bt4", "counter": 143, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 48702, "transport": "bt4", "counter": 144, "messages_b64": ["EiAAEAf52D0cRz4WBT8KRApPCAAAgg8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 49336, "transport": "bt4", "counter": 147, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 49726, "transport": "bt4", "counter": 148, "messages_b64": ["EiAACwg7zT0cmVYWBTgKRwpMCAAAjA8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 50934, "transport": "bt4", "counter": 153, "messages_b64": ["EiAACwfO0z0ccm0WBTAKQgpKCAAAlg8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 51900, "transport": "bt4", "counter": 157, "messages_b64": ["EiAACgjAzD0czUgWBTEKOQpOCAAAoA8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 52900, "transport": "bt4", "counter": 161, "messages_b64": ["EiAADAdlxj0cbW0WBTcKMwpKCAAAqg8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 53113, "transport": "bt4", "counter": 162, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 53509, "transport": "bt4", "counter": 163, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 54306, "transport": "bt4", "counter": 167, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 54700, "transport": "bt4", "counter": 168, "messages_b64": ["EiAAEgVplj0cGmgWBTUKNwpGCAAAvg8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 55303, "transport": "bt4", "counter": 171, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 55907, "transport": "bt4", "counter": 173, "messages_b64": ["EiAAFQf6mT0cJ3MWBTkKNQpICAAAyA8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 56300, "transport": "bt4", "counter": 175, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 56704, "transport": "bt4", "counter": 176, "messages_b64": ["EiAAGgihpD0cilMWBTkKLQo+CAAA0g8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 57902, "transport": "bt4", "counter": 181, "messages_b64": ["EiAAHQd7hD0cU2QWBTwKJwo3CAAA3A8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 58905, "transport": "bt4", "counter": 185, "messages_b64": ["EiAAFwYbcj0cxEwWBTQKKgo1CAAA5g8AAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 60140, "transport": "bt4", "counter": 190, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 61132, "transport": "bt4", "counter": 194, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 62097, "transport": "bt4", "counter": 198, "messages_b64": ["QgUdaj0c1YMWBQAAAAAAAAASAAAAAAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 63100, "transport": "bt4", "counter": 202, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF83MjY5OAAAAA=="], "mac": "E3:14:9B:34:01:03", "serial": "Spoofed_Serial_72698"}
+{"time_offset_ms": 6416, "transport": "bt4", "counter": 6, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 7207, "transport": "bt4", "counter": 6, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 7418, "transport": "bt4", "counter": 6, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 8001, "transport": "bt4", "counter": 6, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 8202, "transport": "bt4", "counter": 6, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 8608, "transport": "bt4", "counter": 6, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 10214, "transport": "bt4", "counter": 6, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 10416, "transport": "bt4", "counter": 22, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 11000, "transport": "bt4", "counter": 22, "messages_b64": ["QgV4MD0cO1UVBQAAAAAAAAASAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 11203, "transport": "bt4", "counter": 25, "messages_b64": ["EiAATgbD5jwcrG8VBYMKiApcCAAA3gMAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 11409, "transport": "bt4", "counter": 25, "messages_b64": ["EiAATgbD5jwcrG8VBYMKiApcCAAA3gMAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 11610, "transport": "bt4", "counter": 25, "messages_b64": ["EiAATgbD5jwcrG8VBYMKiApcCAAA3gMAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 12001, "transport": "bt4", "counter": 25, "messages_b64": ["EiAATgbD5jwcrG8VBYMKiApcCAAA3gMAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 12202, "transport": "bt4", "counter": 29, "messages_b64": ["EiAAUQeE8zwctGAVBXsKjQpZCAAA6AMAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 12609, "transport": "bt4", "counter": 29, "messages_b64": ["EiAAUQeE8zwctGAVBXsKjQpZCAAA6AMAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 13617, "transport": "bt4", "counter": 35, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 14201, "transport": "bt4", "counter": 35, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 14406, "transport": "bt4", "counter": 35, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 14615, "transport": "bt4", "counter": 35, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 15007, "transport": "bt4", "counter": 41, "messages_b64": ["EiAATQYV1Dwc2pcVBXsKkwppCAAABgQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 15798, "transport": "bt4", "counter": 44, "messages_b64": ["EiAARwSDsjwctKwVBXQKlwppCAAAEAQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 16001, "transport": "bt4", "counter": 44, "messages_b64": ["EiAARwSDsjwctKwVBXQKlwppCAAAEAQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 16203, "transport": "bt4", "counter": 44, "messages_b64": ["EiAARwSDsjwctKwVBXQKlwppCAAAEAQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 16404, "transport": "bt4", "counter": 44, "messages_b64": ["EiAARwSDsjwctKwVBXQKlwppCAAAEAQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 16606, "transport": "bt4", "counter": 44, "messages_b64": ["EiAARwSDsjwctKwVBXQKlwppCAAAEAQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 17202, "transport": "bt4", "counter": 44, "messages_b64": ["EiAARwSDsjwctKwVBXQKlwppCAAAEAQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 17616, "transport": "bt4", "counter": 44, "messages_b64": ["EiAARwSDsjwctKwVBXQKlwppCAAAEAQAAA=="], "mac": "EE:84:7C:F3:40:9A"}
+{"time_offset_ms": 19408, "transport": "bt4", "counter": 58, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 19608, "transport": "bt4", "counter": 58, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 20005, "transport": "bt4", "counter": 58, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 20210, "transport": "bt4", "counter": 58, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 22005, "transport": "bt4", "counter": 58, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 22416, "transport": "bt4", "counter": 58, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 22800, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 23004, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 23629, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 24007, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 24208, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 24417, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 25002, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 25408, "transport": "bt4", "counter": 72, "messages_b64": ["EiAAVP3fwDwcTXMVBXkKpgpqCAAAVgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 26799, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 28211, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 28417, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 29004, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 29212, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 29620, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 30206, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 30613, "transport": "bt4", "counter": 88, "messages_b64": ["EiAAUgJv2jwciYYVBXgKpAplCAAAfgQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 33802, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 34207, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 34414, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 34617, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 36005, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 36407, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 37204, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 37405, "transport": "bt4", "counter": 116, "messages_b64": ["EiAAUwPoJD0c7C4VBWMKrgpoCAAAxAQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 38008, "transport": "bt4", "counter": 133, "messages_b64": ["EiAAUASGRD0csTcVBWAKtgpvCAAA7AQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 38211, "transport": "bt4", "counter": 133, "messages_b64": ["EiAAUASGRD0csTcVBWAKtgpvCAAA7AQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 38412, "transport": "bt4", "counter": 133, "messages_b64": ["EiAAUASGRD0csTcVBWAKtgpvCAAA7AQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 39004, "transport": "bt4", "counter": 133, "messages_b64": ["EiAAUASGRD0csTcVBWAKtgpvCAAA7AQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 39006, "transport": "bt4", "counter": 137, "messages_b64": ["EiAAUATPZj0cPzEVBWMKtQptCAAA9gQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 39412, "transport": "bt4", "counter": 137, "messages_b64": ["EiAAUATPZj0cPzEVBWMKtQptCAAA9gQAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 39800, "transport": "bt4", "counter": 140, "messages_b64": ["EiAATgP4ej0cpDgVBWYKuQp1CAAAAAUAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 40006, "transport": "bt4", "counter": 140, "messages_b64": ["EiAATgP4ej0cpDgVBWYKuQp1CAAAAAUAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 40414, "transport": "bt4", "counter": 140, "messages_b64": ["EiAATgP4ej0cpDgVBWYKuQp1CAAAAAUAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 40616, "transport": "bt4", "counter": 143, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 41205, "transport": "bt4", "counter": 143, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 41413, "transport": "bt4", "counter": 143, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 42002, "transport": "bt4", "counter": 143, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 42619, "transport": "bt4", "counter": 143, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 44004, "transport": "bt4", "counter": 157, "messages_b64": ["EiAATgTjPz0c6VkVBVQKsgp/CAAAKAUAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 44203, "transport": "bt4", "counter": 157, "messages_b64": ["EiAATgTjPz0c6VkVBVQKsgp/CAAAKAUAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 46007, "transport": "bt4", "counter": 157, "messages_b64": ["EiAATgTjPz0c6VkVBVQKsgp/CAAAKAUAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 46609, "transport": "bt4", "counter": 157, "messages_b64": ["EiAATgTjPz0c6VkVBVQKsgp/CAAAKAUAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 47407, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 49006, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 49414, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 50003, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 50209, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 50411, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 50613, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 51423, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 51631, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 51997, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 52202, "transport": "bt4", "counter": 170, "messages_b64": ["AhJTcG9vZmVkX1NlcmlhbF8yMzkxMAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 53619, "transport": "bt4", "counter": 195, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 54206, "transport": "bt4", "counter": 195, "messages_b64": ["MgBTcG9vZmluZyB0ZXN0AAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}
+{"time_offset_ms": 54619, "transport": "bt4", "counter": 199, "messages_b64": ["UgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="], "mac": "EE:84:7C:F3:40:9A", "serial": "Spoofed_Serial_23910"}

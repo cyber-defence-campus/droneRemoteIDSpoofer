@@ -26,6 +26,7 @@ import socket
 import struct
 import subprocess
 import time
+import threading
 from typing import Dict, List, Optional
 
 from drone_rid_spoofer.state import DroneState
@@ -100,7 +101,8 @@ class _BleBase(TransportBackend):
     _ADV_ENABLE_OPCODES: tuple = ()
 
     def __init__(self, adapter: str = "hci0", advertising_interval_ms: int = 200,
-                 protocol_version: int = 2):
+                 protocol_version: int = 2, fuzz_config: dict = None):
+        super().__init__(fuzz_config)
         self.adapter = adapter
         self.adapter_id = int(adapter.replace("hci", ""))
         self.advertising_interval_ms = advertising_interval_ms
@@ -108,8 +110,16 @@ class _BleBase(TransportBackend):
         # Message pack header: msg_type (0xF = Pack) + ver, msg_size (0x19 = 25 bytes)
         self.pack_header_prefix = bytes([(MsgType.PACK << 4) | self.protocol_version, 0x19])
         self._sock: Optional[socket.socket] = None
-        self._counters: Dict[bytes, int] = {}  # per-drone message counter
         self._static_index: Dict[bytes, int] = {}  # per-drone static-msg rotation pointer
+        self._cycle_counts: Dict[bytes, int] = {}  # per-drone cycle counter for staggering
+        self._event_buffer: List[bytes] = []  # Buffer for unhandled HCI events
+        self._counters: Dict[str, int] = {}  # general counter fallback
+        self._legacy_counters: Dict[str, int] = {}  # per-drone message sequence counter (legacy)
+        self._extended_counters: Dict[str, int] = {}  # per-drone message sequence counter (extended)
+        self._drones = []
+        self._packet_builder = None
+        self._running = False
+        self._thread = None
         self._open_socket()
         self._init_advertising()
 
@@ -151,6 +161,17 @@ class _BleBase(TransportBackend):
 
         logger.info(f"BLE backend: opened HCI socket on {self.adapter}")
 
+    def start(self, drones: List[DroneState], packet_builder) -> None:
+        self._drones = drones
+        self._packet_builder = packet_builder
+        self._running = True
+        self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
+        self._thread.start()
+        logger.info("BLE backend background thread started")
+
+    def _transmit_loop(self) -> None:
+        raise NotImplementedError
+
     def _send_hci_command(self, opcode: int, data: bytes) -> None:
         """Send an HCI command and wait for the controller's Command Complete."""
         cmd = _build_hci_command(opcode, data)
@@ -189,8 +210,10 @@ class _BleBase(TransportBackend):
                 status = pkt[3]
                 evt_opcode = struct.unpack("<H", pkt[5:7])[0]
             else:
+                self._event_buffer.append(pkt)
                 continue  # unrelated event, keep draining
             if evt_opcode != opcode:
+                self._event_buffer.append(pkt)
                 continue
             if status != 0:
                 # 0x0C "Command Disallowed" on advertising enable/disable just
@@ -205,6 +228,60 @@ class _BleBase(TransportBackend):
                     )
             return
 
+    def _wait_for_adv_terminated(self, handle: int, timeout: float = 0.5) -> bool:
+        """Wait for LE Advertising Set Terminated event for the given handle."""
+        deadline = time.monotonic() + timeout
+
+        def is_terminated_event(p: bytes) -> bool:
+            if len(p) >= 6 and p[0] == HCI_EVENT_PKT and p[1] == 0x3E and p[3] == 0x12:
+                return p[5] == handle
+            return False
+
+        # 1. Check if the event is already in the buffer
+        for i, p in enumerate(self._event_buffer):
+            if is_terminated_event(p):
+                self._event_buffer.pop(i)
+                return True
+
+        # 2. Read from socket if not found
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            ready, _, _ = select.select([self._sock], [], [], remaining)
+            if not ready:
+                continue
+            try:
+                pkt = self._sock.recv(258)
+            except OSError:
+                return False
+            
+            if is_terminated_event(pkt):
+                return True
+            else:
+                self._event_buffer.append(pkt)
+
+    def _flush_adv_terminated_events(self, handle: int) -> None:
+        """Clear any stale LE Advertising Set Terminated events for the given handle from the buffer."""
+        def is_terminated_event(p: bytes) -> bool:
+            if len(p) >= 6 and p[0] == HCI_EVENT_PKT and p[1] == 0x3E and p[3] == 0x12:
+                return p[5] == handle
+            return False
+            
+        # Drain the socket completely so all pending events are in the buffer
+        while True:
+            ready, _, _ = select.select([self._sock], [], [], 0.0)
+            if not ready:
+                break
+            try:
+                pkt = self._sock.recv(258)
+                self._event_buffer.append(pkt)
+            except OSError:
+                break
+
+        # Remove all terminated events for this handle
+        self._event_buffer = [p for p in self._event_buffer if not is_terminated_event(p)]
+
     def _warn_if_bad_random_address(self, mac: str, addr_bytes: bytes) -> None:
         """Log a warning if MAC doesn't satisfy BLE Static Random Address format."""
         if addr_bytes[-1] & 0xC0 != 0xC0:
@@ -215,29 +292,40 @@ class _BleBase(TransportBackend):
 
     def _build_send_sequence(self, drone_key: bytes,
                              messages: List[bytes]) -> List[bytes]:
-        """Return per-cycle send sequence: 2x Location + 2 rotating static msgs.
+        """Return per-cycle send sequence: 1x Location + staggered static msgs.
 
         ASTM F3411-22a Timing Requirements:
           - Location/Vector: 1 Hz (at least once per second)
           - Other messages: 0.33 Hz (at least once every 3 seconds)
 
         With up to 4 static types (BasicID, SelfID, System, OperatorID),
-        sending 2 rotating statics per cycle ensures a full refresh every
-        2 seconds, satisfying the 3s requirement.
+        staggering them mathematically over 3 cycles averages 1.33 statics
+        per cycle. Offset by drone_key ensures perfect multiplexing.
         """
         location_msgs = [m for m in messages if m and (m[0] >> 4) == MsgType.LOCATION]
         static_msgs = [m for m in messages if m and (m[0] >> 4) != MsgType.LOCATION]
 
-        # Send location twice (if available)
-        sequence = (location_msgs[:1] * 2) if location_msgs else []
+        # Send location once (if available)
+        sequence = location_msgs[:1] if location_msgs else []
 
         if static_msgs:
+            cycle_count = self._cycle_counts.get(drone_key, 0)
+            
+            # Use drone_key to stagger the heavy cycle across different drones
+            offset = sum(drone_key) % 3
+            c = cycle_count + offset
+            
+            # Send 2 statics every 3rd cycle, otherwise 1 static (averages 1.33)
+            num_statics = 2 if (c % 3) == 0 else 1
+            
             idx = self._static_index.get(drone_key, 0)
-            # Send 2 rotating statics
-            for _ in range(min(2, len(static_msgs))):
+            for _ in range(min(num_statics, len(static_msgs))):
                 sequence.append(static_msgs[idx % len(static_msgs)])
                 idx += 1
+                
             self._static_index[drone_key] = idx % len(static_msgs)
+            self._cycle_counts[drone_key] = cycle_count + 1
+            
         return sequence
 
     def _build_legacy_ad(self, message: bytes, counter: int) -> bytes:
@@ -260,6 +348,10 @@ class _BleBase(TransportBackend):
 
     def close(self) -> None:
         """Disable advertising and close HCI socket."""
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+            
         if self._sock:
             try:
                 self._disable_advertising()
@@ -269,6 +361,18 @@ class _BleBase(TransportBackend):
             self._sock = None
             logger.info("BLE backend: closed HCI socket")
 
+    def remove_drone(self, drone: DroneState) -> None:
+        """Remove state for an expired drone."""
+        drone_key = drone.serial
+        if hasattr(self, '_counters'):
+            self._counters.pop(drone_key, None)
+        if hasattr(self, '_legacy_counters'):
+            self._legacy_counters.pop(drone_key, None)
+        if hasattr(self, '_extended_counters'):
+            self._extended_counters.pop(drone_key, None)
+        self._static_index.pop(drone_key, None)
+        self._cycle_counts.pop(drone_key, None)
+
 
 # ── BLE 4 Legacy backend ──────────────────────────────────────────────────────
 
@@ -276,23 +380,23 @@ class BleLegacyBackend(_BleBase):
     """BLE 4 Legacy Advertising transport for ASTM F3411-19/22 RID.
 
     Sends one ASTM message per BLE advertisement, rotating through
-    message types (2x Location + 2x rotating Statics per cycle).
+    message types (1x Location + staggered statics per cycle).
     Used for hardware that does not support BLE 5 Extended Advertising.
     Works on any BLE 4+ adapter.
 
     Multi-drone constraint: BLE has one radio, so drones are
-    time-multiplexed. Each cycle emits 3x Location plus one rotating
-    static message (BasicID, Self-ID, System, OperatorID), i.e. 4 ads
-    per drone. At 200ms per ad and a 1s interval, two drones fit per
-    cycle; reduce advertising_interval_ms (e.g. 100) to fit more.
+    time-multiplexed. Each cycle emits 1x Location plus one or two rotating
+    static messages, averaging ~2.33 ads per drone per cycle.
+    At 200ms per ad and a 1s interval, one drone fits safely;
+    reduce advertising_interval_ms to fit more.
     """
 
     _ADV_ENABLE_OPCODES = (HCI_CMD_LE_SET_ADV_ENABLE,)
 
     def __init__(self, adapter: str = "hci0", advertising_interval_ms: int = 200,
-                 protocol_version: int = 2):
+                 protocol_version: int = 2, fuzz_config: dict = None):
         self._adv_enabled: bool = False
-        super().__init__(adapter, advertising_interval_ms, protocol_version)
+        super().__init__(adapter, advertising_interval_ms, protocol_version, fuzz_config=fuzz_config)
 
     def _init_advertising(self) -> None:
         """No-op — legacy params are set each cycle in send_messages."""
@@ -314,10 +418,12 @@ class BleLegacyBackend(_BleBase):
         self._warn_if_bad_random_address(mac, addr_bytes)
         self._send_hci_command(HCI_CMD_LE_SET_RANDOM_ADDR, addr_bytes)
 
-    def _set_advertising_params(self) -> None:
+    def _set_advertising_params(self, interval_ms: Optional[float] = None) -> None:
         """Set advertising parameters for ADV_NONCONN_IND."""
+        if interval_ms is None:
+            interval_ms = self.advertising_interval_ms
         # Interval is in units of 0.625 ms
-        interval = int(self.advertising_interval_ms / 0.625)
+        interval = max(32, int(interval_ms / 0.625))  # BLE min is 32 (20ms)
         params = struct.pack('<HH', interval, interval)  # min, max interval
         params += bytes([
             0x03,  # ADV_NONCONN_IND
@@ -338,41 +444,68 @@ class BleLegacyBackend(_BleBase):
         hci_data = bytes([len(ad_data)]) + ad_data + b'\x00' * (31 - len(ad_data))
         self._send_hci_command(HCI_CMD_LE_SET_ADV_DATA, hci_data)
 
-    def send_messages(self, drone: DroneState, messages: List[bytes]) -> None:
-        """Send ASTM messages as individual BLE advertisements.
+    def _transmit_loop(self) -> None:
+        """Continuously broadcast all active beacons."""
+        while self._running:
+            if not self._sock:
+                time.sleep(0.1)
+                continue
+                
+            active_drones = [d for d in self._drones if getattr(d, 'active', True)]
+            if not active_drones:
+                time.sleep(0.1)
+                continue
 
-        Each cycle sends Location at 3x and one rotating static message
-        (BasicID/Self-ID/System/OperatorID), keeping the per-drone budget
-        at 4 advertisements.
-        """
-        if not self._sock:
-            logger.error("BLE socket not open")
-            return
+            start_time = time.monotonic()
 
-        # Get or initialize counter for this drone
-        drone_key = drone.serial
-        counter = self._counters.get(drone_key, 0)
+            all_sequences = []
+            total_messages = 0
+            for drone in active_drones:
+                messages = self._packet_builder(drone)
+                drone_key = drone.serial
+                send_sequence = self._build_send_sequence(drone_key, messages)
+                all_sequences.append((drone, send_sequence))
+                total_messages += len(send_sequence)
 
-        # Disable advertising before reconfiguring
-        self._set_advertising_enable(False)
+            current_interval_ms = self.advertising_interval_ms
+            dwell_time = self.advertising_interval_ms / 1000.0
 
-        # Set random address to drone's MAC
-        self._set_random_address(drone.ble_address)
-        self._set_advertising_params()
+            for drone, send_sequence in all_sequences:
+                if not self._running:
+                    break
+                    
+                drone_key = drone.serial
 
-        send_sequence = self._build_send_sequence(drone_key, messages)
+                # Disable advertising before reconfiguring
+                self._set_advertising_enable(False)
 
-        for msg in send_sequence:
-            self._set_advertising_data(msg, counter)
-            self._set_advertising_enable(True)
+                # Set random address to drone's MAC
+                self._set_random_address(drone.ble_address)
+                self._set_advertising_params(current_interval_ms)
 
-            # Let the advertisement transmit
-            time.sleep(self.advertising_interval_ms / 1000.0)
+                if not hasattr(self, '_legacy_counters'):
+                    self._legacy_counters = {}
+                counter = self._legacy_counters.get(drone_key, 0)
 
-            self._set_advertising_enable(False)
-            counter = (counter + 1) & 0xFF
+                for msg in send_sequence:
+                    if not self._running:
+                        break
+                    self._set_advertising_data(msg, counter)
+                    self._set_advertising_enable(True)
 
-        self._counters[drone_key] = counter
+                    # Let the advertisement transmit
+                    time.sleep(dwell_time)
+
+                    self._set_advertising_enable(False)
+                    counter = (counter + 1) & 0xFF
+
+                self._legacy_counters[drone_key] = counter
+
+            elapsed = time.monotonic() - start_time
+            if elapsed > 1.0:
+                logger.warning(f"BLE4 Legacy deadline missed! Cycle took {elapsed*1000:.2f}ms (target: 1000ms)")
+            else:
+                time.sleep(1.0 - elapsed)
 
 
 # ── BLE 5 Extended Advertising backend ─────────────────────────────────────────
@@ -380,37 +513,62 @@ class BleLegacyBackend(_BleBase):
 class BleExtendedBackend(_BleBase):
     """BLE 5 Extended Advertising transport for ASTM F3411-22 RID.
 
-    Uses BLE 5 Extended Advertising with two simultaneous handles:
-      Handle 0: Legacy PDU (1M PHY) — BLE 4 compatible single-message rotation.
-                Used for backward compatibility with standard RID scanners.
-      Handle 1: Extended PDU (LE Coded PHY) — Full ODID Message Pack.
-                Maximizes range and ensures all messages are received at once.
+    Supports three operating modes:
+      - "extended" (default): Handle 1 (LE Coded PHY) — Full ODID Message Pack.
+      - "ext-legacy": Handle 0 (LE 1M PHY, properties=0x0010) — BLE 4 compatible
+        single-message rotation transmitted via BLE 5 Extended Advertising HCI API.
+        Used on modern BLE 5 adapters when legacy HCI commands (0x2006/0x2008) are disallowed.
+      - "dual": Both Handle 0 (Legacy PDU) and Handle 1 (Extended PDU) simultaneously.
 
     Timing Model:
-      The handles are decoupled. The Legacy PDU rotates through the message
+      In dual mode, handles are decoupled. The Legacy PDU rotates through the message
       sequence with a fast 'legacy_interval_ms', while the Extended PDU pulses
-      in the background at a slower 'extended_interval_ms'.
+      in the background at 'extended_interval_ms'.
     """
 
     _ADV_ENABLE_OPCODES = (HCI_CMD_LE_SET_EXT_ADV_ENABLE,)
 
     def __init__(self, adapter: str = "hci0",
                  legacy_interval_ms: int = 100,
-                 extended_interval_ms: int = 200,
-                 protocol_version: int = 2):
-        super().__init__(adapter, extended_interval_ms, protocol_version)
-        self.legacy_interval_ms = legacy_interval_ms
+                 extended_interval_ms: Optional[int] = None,
+                 protocol_version: int = 2,
+                 pure_bt5: Optional[bool] = None,
+                 mode: str = "extended",
+                 optimize_params: bool = True,
+                 fuzz_config: dict = None):
+        self.legacy_interval_ms = legacy_interval_ms if legacy_interval_ms is not None else 100
+        effective_extended_interval = extended_interval_ms if extended_interval_ms is not None else self.legacy_interval_ms
+
+        if pure_bt5 is not None:
+            self.mode = "extended" if pure_bt5 else "dual"
+        else:
+            self.mode = mode.replace("_", "-")
+
+        self.pure_bt5 = (self.mode == "extended")
+        if fuzz_config and "optimize_params" in fuzz_config:
+            self.optimize_params = bool(fuzz_config["optimize_params"])
+        else:
+            self.optimize_params = optimize_params
+        super().__init__(adapter, effective_extended_interval, protocol_version, fuzz_config=fuzz_config)
 
     def _init_advertising(self) -> None:
-        """Initialize extended advertising sets."""
+        """Initialize extended advertising sets based on configured mode."""
         self._set_advertising_enable(False, [0x00, 0x01])
-        # Handle 0: legacy PDU, 1M PHY — SID 0
-        self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00)
-        # Handle 1: extended PDU, LE Coded PHY — SID 1
-        self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01)
+        if self.mode in ("ext-legacy", "dual"):
+            # Handle 0: legacy PDU, 1M PHY — SID 0
+            self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=self.legacy_interval_ms if self.optimize_params else None)
+            self._last_configured_legacy_interval = self.legacy_interval_ms
+        if self.mode in ("extended", "dual"):
+            # Handle 1: extended PDU, LE Coded PHY — SID 1
+            self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms if self.optimize_params else None)
 
     def _disable_advertising(self) -> None:
-        self._set_advertising_enable(False, [])
+        active_handles = []
+        if self.mode in ("ext-legacy", "dual"):
+            active_handles.append(0x00)
+        if self.mode in ("extended", "dual"):
+            active_handles.append(0x01)
+        self._set_advertising_enable(False, active_handles)
 
     def _set_advertising_params(self, handle: int, properties: int,
                                  primary_phy: int, secondary_phy: int, sid: int,
@@ -454,12 +612,12 @@ class BleExtendedBackend(_BleBase):
         header = struct.pack("<BBBB", handle, 0x03, 0x01, len(ad_payload))
         self._send_hci_command(HCI_CMD_LE_SET_EXT_ADV_DATA, header + ad_payload)
 
-    def _set_advertising_enable(self, enable: bool, handles: List[int]) -> None:
+    def _set_advertising_enable(self, enable: bool, handles: List[int], max_events: int = 0) -> None:
         """Enable or disable Extended Advertising for the given handles."""
         if enable:
             payload = struct.pack("<BB", 0x01, len(handles))
             for h in handles:
-                payload += struct.pack("<BHB", h, 0x0000, 0x00)
+                payload += struct.pack("<BHB", h, 0x0000, max_events)
         else:
             # Explicitly disable specific handles if provided, otherwise try global disable
             num_sets = len(handles)
@@ -472,62 +630,155 @@ class BleExtendedBackend(_BleBase):
         """Build a Service Data AD element containing an ODID Message Pack.
 
         Layout: [AD Len][0x16][UUID][AppCode][Counter][PackHdr][MsgSize][N][msg0...msgN]
+        Limits the number of messages to 9 per pack to ensure AD Len fits in 1 byte (< 255).
         """
-        msg_count = len(messages) & 0xFF
+        # A single AD element length is 1 byte (max 255).
+        # Header is UUID(2) + AppCode(1) + Counter(1) + PackHdr(2) + MsgSize(1) = 7 bytes
+        # Each message is 25 bytes. 9 * 25 = 225 bytes. Total = 232 bytes + AD_TYPE(1) = 233.
+        # So we take a maximum of 9 messages to fit comfortably in a single extended AD Service Data element.
+        if not self.fuzz_config.get("disable_pack_limit", False):
+            pack_msgs = messages[:9]
+        else:
+            pack_msgs = messages
+            
+        pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
+        pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
+        msg_count = self.fuzz_config.get("pack_msg_count", len(pack_msgs) & 0xFF)
+        
         service_data = (
             ASTM_UUID
             + bytes([ASTM_APP_CODE, counter & 0xFF])
-            + self.pack_header_prefix
+            + bytes([pack_type_ver & 0xFF, pack_msg_size & 0xFF])
             + bytes([msg_count])
-            + b''.join(messages)
+            + b''.join(pack_msgs)
         )
-        ad_length = 1 + len(service_data)  # AD Type byte + data
+        ad_length = (1 + len(service_data)) & 0xFF
+        if "ad_length" in self.fuzz_config:
+            ad_length = self.fuzz_config["ad_length"] & 0xFF
         return bytes([ad_length, AD_TYPE_SERVICE_DATA_16]) + service_data
 
-    def send_messages(self, drone: DroneState, messages: List[bytes]) -> None:
-        """Send ASTM messages via BLE Extended Advertising.
+    def _transmit_loop(self) -> None:
+        """Continuously broadcast all active beacons."""
+        while self._running:
+            if not self._sock:
+                time.sleep(0.1)
+                continue
+                
+            active_drones = [d for d in self._drones if getattr(d, 'active', True)]
+            if not active_drones:
+                time.sleep(0.1)
+                continue
 
-        Handle 0: legacy PDU — single message rotation (3x Location + 1 static).
-        Handle 1: extended PDU — full ODID Message Pack on LE Coded PHY.
-        """
-        if not self._sock:
-            logger.error("BLE socket not open")
-            return
+            start_time = time.monotonic()
 
-        drone_key = drone.serial
-        counter = self._counters.get(drone_key, 0)
+            all_sequences = []
+            total_legacy_messages = 0
+            for drone in active_drones:
+                messages = self._packet_builder(drone)
+                drone_key = drone.serial
+                send_sequence = self._build_send_sequence(drone_key, messages)
+                all_sequences.append((drone, messages, send_sequence))
+                if self.mode in ("ext-legacy", "dual"):
+                    total_legacy_messages += len(send_sequence)
 
-        # 1. Disable broadcasting before altering sets
-        self._set_advertising_enable(False, [0x00, 0x01])
-        time.sleep(0.01)
+            current_legacy_interval_ms = self.legacy_interval_ms
+            dynamic_legacy_dwell = self.legacy_interval_ms / 1000.0
 
-        # 2. Re-apply Params and Address
-        # Use a faster dwell for Legacy rotation; use standard interval for Extended pack.
-        self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=self.legacy_interval_ms)
-        self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms)
-        self._set_random_address(0x00, drone.ble_address)
-        self._set_random_address(0x01, drone.ble_address)
+            for drone, messages, send_sequence in all_sequences:
+                if not self._running:
+                    break
+                    
+                drone_key = drone.serial
 
-        # BLE4 rotation sequence for handle 0
-        send_sequence = self._build_send_sequence(drone_key, messages)
-        
-        # 3. Upload and start the Message Pack (Handle 1)
-        pack_ad = self._build_message_pack_ad(messages, counter)
-        self._set_advertising_data(0x01, pack_ad)
-        self._set_advertising_enable(True, [0x01])
+                if not hasattr(self, '_extended_counters'):
+                    self._extended_counters = {}
+                counter = self._extended_counters.get(drone_key, 0)
 
-        # 4. Manually cycle through Legacy messages (Handle 0)
-        for msg in send_sequence:
-            legacy_ad = self._build_legacy_ad(msg, counter)
-            self._set_advertising_data(0x00, legacy_ad)
-            self._set_advertising_enable(True, [0x00])
+                if self.mode == "ext-legacy":
+                    if self.optimize_params:
+                        if not hasattr(self, '_last_configured_legacy_interval') or self._last_configured_legacy_interval != current_legacy_interval_ms:
+                            self._set_advertising_enable(False, [0x00])
+                            self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                            self._last_configured_legacy_interval = current_legacy_interval_ms
+                        self._set_random_address(0x00, drone.ble_address)
+                    else:
+                        # 1. Disable broadcasting Handle 0 before altering params
+                        self._set_advertising_enable(False, [0x00])
+                        # 2. Re-apply Params and Address on Handle 0 (Legacy PDU)
+                        self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                        self._set_random_address(0x00, drone.ble_address)
 
-            # Wait for the legacy dwell time
-            time.sleep(self.legacy_interval_ms / 1000.0)
+                    # 3. Manually cycle through Legacy messages (Handle 0)
+                    for msg in send_sequence:
+                        if not self._running:
+                            break
+                        legacy_ad = self._build_legacy_ad(msg, counter)
+                        self._set_advertising_data(0x00, legacy_ad)
+                        self._set_advertising_enable(True, [0x00])
 
-            self._set_advertising_enable(False, [0x00])
-            counter = (counter + 1) & 0xFF
+                        # Wait for the legacy dwell time
+                        time.sleep(dynamic_legacy_dwell)
 
-        # 5. Stop Handle 1
-        self._set_advertising_enable(False, [0x01])
-        self._counters[drone_key] = counter
+                        self._set_advertising_enable(False, [0x00])
+                        counter = (counter + 1) & 0xFF
+
+                elif self.mode == "extended":
+                    # Pure BT5: Extended Message Pack on Handle 1 (Coded PHY)
+                    if not self.optimize_params:
+                        self._set_advertising_enable(False, [0x01])
+                        self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms)
+                    self._set_random_address(0x01, drone.ble_address)
+
+                    pack_ad = self._build_message_pack_ad(messages, counter)
+                    self._set_advertising_data(0x01, pack_ad)
+
+                    self._flush_adv_terminated_events(0x01)
+                    self._set_advertising_enable(True, [0x01], max_events=1)
+                    timeout_s = max(0.2, (self.advertising_interval_ms / 1000.0) * 1.5)
+                    self._wait_for_adv_terminated(0x01, timeout=timeout_s)
+                    counter = (counter + 1) & 0xFF
+
+                else:  # dual mode
+                    # Dual: Both Handle 1 (Extended) and Handle 0 (Legacy)
+                    if self.optimize_params:
+                        if not hasattr(self, '_last_configured_legacy_interval') or self._last_configured_legacy_interval != current_legacy_interval_ms:
+                            self._set_advertising_enable(False, [0x00])
+                            self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                            self._last_configured_legacy_interval = current_legacy_interval_ms
+                        self._set_random_address(0x00, drone.ble_address)
+                        self._set_random_address(0x01, drone.ble_address)
+                    else:
+                        self._set_advertising_enable(False, [0x00, 0x01])
+                        self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=current_legacy_interval_ms)
+                        self._set_random_address(0x00, drone.ble_address)
+                        self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms)
+                        self._set_random_address(0x01, drone.ble_address)
+
+                    pack_ad = self._build_message_pack_ad(messages, counter)
+                    self._set_advertising_data(0x01, pack_ad)
+                    self._set_advertising_enable(True, [0x01])
+
+                    for msg in send_sequence:
+                        if not self._running:
+                            break
+                        legacy_ad = self._build_legacy_ad(msg, counter)
+                        self._set_advertising_data(0x00, legacy_ad)
+                        self._set_advertising_enable(True, [0x00])
+
+                        time.sleep(dynamic_legacy_dwell)
+
+                        self._set_advertising_enable(False, [0x00])
+                        counter = (counter + 1) & 0xFF
+
+                    self._set_advertising_enable(False, [0x01])
+
+                self._extended_counters[drone_key] = counter
+
+
+
+
+            elapsed = time.monotonic() - start_time
+            if elapsed > 1.0:
+                logger.warning(f"BLE ({self.mode}) deadline missed! Cycle took {elapsed*1000:.2f}ms (target: 1000ms)")
+            else:
+                time.sleep(1.0 - elapsed)
