@@ -11,6 +11,8 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
 
+import matplotlib.pyplot as plt
+
 # Add parent directory to path to import drone_rid_spoofer
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -904,8 +906,6 @@ def main():
 
     # Generate Plots (separated per channel + side-by-side comparative figure)
     try:
-        import matplotlib.pyplot as plt
-
         # Group results by channel
         channels_map = {}
         for r in results:
@@ -971,8 +971,8 @@ def main():
             plt.close()
             logger.info(f"Saved side-by-side channel comparison plot to {comp_plot_file}")
 
-    except ImportError:
-        logger.warning("matplotlib not installed. Skipping plot generation. Time series data is saved in JSON.")
+    except Exception as e:
+        logger.warning(f"Failed to generate plot: {e}. Time series data is saved in JSON.")
 
     # Finally, print the massive red-flag missed deadline warnings at the absolute end so they are not hidden
     total_missed = sum(r.get("performance", {}).get("missed_deadlines", 0) for r in results)

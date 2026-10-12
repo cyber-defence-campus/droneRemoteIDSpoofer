@@ -20,6 +20,8 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+import matplotlib.pyplot as plt
+
 # Add parent directory to path to import drone_rid_spoofer modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -75,12 +77,7 @@ class NrfSnifferThread(threading.Thread):
         time.sleep(0.5)
         
         eval_dir = os.path.dirname(os.path.abspath(__file__))
-        candidate_paths = [
-            os.path.join(eval_dir, "..", "scanner", "sniffers", "nrf_bt_sniffer_json.py"),
-            os.path.join(eval_dir, "..", "scanner", "nrf_bt_sniffer_json.py"),
-            os.path.join(eval_dir, "nrf_bt_sniffer_json.py"),
-        ]
-        nrf_script = next((p for p in candidate_paths if os.path.exists(p)), candidate_paths[0])
+        nrf_script = os.path.join(eval_dir, "nrf_bt_sniffer_json.py")
         cmd = [sys.executable, nrf_script]
         if self.nrf_port:
             cmd.extend(["--nrf-port", self.nrf_port])
@@ -89,10 +86,16 @@ class NrfSnifferThread(threading.Thread):
             
         cmd.append("--only-rid")  # Ensure we only process packets containing valid ASTM Remote ID payload data
             
-        if self.coded:
-            cmd.append("--coded")
+        # Map sniffer mode to nrf_bt_sniffer_json.py's --ble-mode
+        # Note: nrf_bt_sniffer_json.py already adds --coded to nrfutil when in BT5 mode.
         if self.ble_mode in ("ble5", "extended", "pure_bt5", "bt5"):
-            cmd.append("-b") # Only output Bluetooth 5 extended advertising
+            cmd.extend(["--ble-mode", "extended", "-b"])
+        elif self.ble_mode in ("ble4", "legacy"):
+            cmd.extend(["--ble-mode", "legacy"])
+        elif self.ble_mode in ("hop", "dual"):
+            cmd.extend(["--ble-mode", "hop"])
+        elif self.ble_mode == "all":
+            cmd.extend(["--ble-mode", "all"])
             
         try:
             # Redirect stdout to pipe to read stream of JSON lines; stderr remains attached for synchronization messages
@@ -806,7 +809,6 @@ def main():
     parser.add_argument("--legacy-interval-ms", type=int, default=None, help="BLE 4 legacy advertising interval in ms (overrides --ble-interval-ms for legacy/dual)")
     parser.add_argument("--extended-interval-ms", type=int, default=None, help="BLE 5 extended advertising interval in ms (overrides --ble-interval-ms for extended/dual)")
     parser.add_argument("--rx-mode", choices=["auto", "ble4", "ble5"], default="auto", help="Sniffer capture mode: 'ble5' (Coded PHY), 'ble4' (1M Legacy), or 'auto'")
-    parser.add_argument("--coded", action="store_true", help="Force nRF sniffer to scan and follow LE Coded PHY")
     parser.add_argument("--with-self-id", action="store_false", dest="no_self_id", default=True, help="Enable Self ID message (disabled by default)")
     parser.add_argument("--no-operator-id", action="store_true", help="Disable Operator ID message")
     parser.add_argument("--debug-sniff", "--print-packets", action="store_true", help="Continuously print received packets in real-time JSON format")
@@ -885,7 +887,6 @@ def main():
                 extended_interval_ms=args.extended_interval_ms,
                 no_self_id=args.no_self_id,
                 no_operator_id=args.no_operator_id,
-                coded_phy=args.coded,
                 print_live=args.debug_sniff,
                 optimize_params=args.optimize_params,
                 rx_mode=args.rx_mode
@@ -961,7 +962,6 @@ def main():
 
     # Generate Plot
     try:
-        import matplotlib.pyplot as plt
         plt.figure(figsize=(10, 6))
         has_data = False
         for r in results:
@@ -983,8 +983,8 @@ def main():
                 plot_file += "_plot.png"
             plt.savefig(plot_file)
             logger.info(f"Saved BLE execution time plot to {plot_file}")
-    except ImportError:
-        logger.warning("matplotlib not installed. Skipping plot generation. Time series data is saved in JSON.")
+    except Exception as e:
+        logger.warning(f"Failed to generate plot: {e}. Time series data is saved in JSON.")
 
 
 if __name__ == "__main__":

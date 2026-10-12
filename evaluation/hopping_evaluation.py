@@ -1510,11 +1510,11 @@ def compute_scanner_recommendations(
         "rf_calibrated_cycle": rf_timing,
         "cli_flags_snippet": (
             f"--social-dwell-ms {social_dwell_ms} --non-social-dwell-ms {non_social_dwell_ms} "
-            f"--lead-time-2g-ms 40 --lead-time-5g-ms 0 --drain-retention-ms 5.0"
+            f"--non-social-dwell-5g-ms 250 --drain-retention-ms 5.0"
         ),
         "rf_cli_flags_snippet": (
             f"--social-dwell-ms {social_dwell_ms} --non-social-dwell-ms {non_social_dwell_ms} "
-            f"--lead-time-2g-ms 40 --lead-time-5g-ms 0 --drain-retention-ms 5.0"
+            f"--non-social-dwell-5g-ms 250 --drain-retention-ms 5.0"
         )
     }
 
