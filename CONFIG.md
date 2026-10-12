@@ -47,6 +47,9 @@ randomly (serial, MAC, and locations).
 - `pilot_location` ([lat, lng]): pilot position. Optional.
 - `lifespan_seconds` (int): stop transmitting after N seconds. Optional.
 - `transport` (string): per-drone transport override (`"wifi"`, `"ble"`, `"nan"`, `"both"`, `"all"`). Optional.
+- `ble_mode` (string): per-drone BLE mode override (`"ext-legacy"` for BLE 4 legacy advertisements via Handle 0, `"extended"` for BLE 5 extended advertising via Handle 1, or `"dual"`). Optional.
+- `description` (string): max 23 ASCII chars. Self-ID (Type 3) description text. Optional.
+- `operator_id` (string): max 20 ASCII chars. Operator ID (Type 5) string. Optional.
 - `timestamp_offset_minutes` (number): shift the ASTM Location timestamp by this many minutes. Negative values produce timestamps in the past (e.g., `-5` = 5 minutes ago). Wraps within the hour. Default: `0`. Optional.
 - `speed` (number): horizontal speed in m/s. Default: random in `[0, 25]`. Optional.
 - `vertical_speed` (number): vertical speed in m/s, positive = climbing. Default: random in `[-5, 5]`. Optional.

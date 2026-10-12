@@ -11,6 +11,8 @@ import threading
 import time
 from typing import List, Dict, Optional
 
+from scapy.all import RadioTap
+
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
 from drone_rid_spoofer.transport.base import TransportBackend
@@ -291,10 +293,9 @@ class NanManualBackend(TransportBackend):
 
         # Precompute Radiotap header
         try:
-            from scapy.all import RadioTap
             self.radiotap_bytes = bytes(RadioTap(present="Rate", Rate=self.rate_mbps))
         except Exception:
-            # Fallback 8-byte minimal RadioTap header if Scapy instantiation fails or module missing
+            # Fallback 8-byte minimal RadioTap header if Scapy instantiation fails
             self.radiotap_bytes = b"\x00\x00\x08\x00\x00\x00\x00\x00"
 
         self._seq_nums: Dict[bytes, int] = {}

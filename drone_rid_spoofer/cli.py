@@ -195,7 +195,13 @@ def main() -> None:
 
         # Resolve BLE mode from CLI flag or scenario config
         if getattr(args, 'ble_mode', None) is None:
-            args.ble_mode = ble_config.get("mode", "extended")
+            args.ble_mode = ble_config.get("mode")
+            if not args.ble_mode:
+                drone_ble_modes = {d.get("ble_mode") for d in getattr(args, 'drones_config', []) if d.get("ble_mode")}
+                if len(drone_ble_modes) > 1 or ("ext-legacy" in drone_ble_modes and "extended" in drone_ble_modes):
+                    args.ble_mode = "dual"
+                else:
+                    args.ble_mode = "extended"
 
         args.ble_mode = args.ble_mode.replace("_", "-")
 

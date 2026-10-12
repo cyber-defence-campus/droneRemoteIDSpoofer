@@ -551,23 +551,45 @@ class BleExtendedBackend(_BleBase):
             self.optimize_params = optimize_params
         super().__init__(adapter, effective_extended_interval, protocol_version, fuzz_config=fuzz_config)
 
+    def start(self, drones: List[DroneState], packet_builder) -> None:
+        self._drones = drones
+        has_ext_legacy = any(getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones)
+        has_extended = any(getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones)
+        if (has_ext_legacy and self.mode == "extended") or (has_extended and self.mode == "ext-legacy"):
+            self._init_advertising()
+        super().start(drones, packet_builder)
+
     def _init_advertising(self) -> None:
         """Initialize extended advertising sets based on configured mode."""
         self._set_advertising_enable(False, [0x00, 0x01])
-        if self.mode in ("ext-legacy", "dual"):
+        has_ext_legacy = self.mode in ("ext-legacy", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones
+        )
+        has_extended = self.mode in ("extended", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones
+        )
+        if has_ext_legacy:
             # Handle 0: legacy PDU, 1M PHY — SID 0
             self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=self.legacy_interval_ms if self.optimize_params else None)
             self._last_configured_legacy_interval = self.legacy_interval_ms
-        if self.mode in ("extended", "dual"):
+        if has_extended:
             # Handle 1: extended PDU, LE Coded PHY — SID 1
             self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms if self.optimize_params else None)
 
     def _disable_advertising(self) -> None:
         active_handles = []
-        if self.mode in ("ext-legacy", "dual"):
+        has_ext_legacy = self.mode in ("ext-legacy", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones
+        )
+        has_extended = self.mode in ("extended", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones
+        )
+        if has_ext_legacy:
             active_handles.append(0x00)
-        if self.mode in ("extended", "dual"):
+        if has_extended:
             active_handles.append(0x01)
+        if not active_handles:
+            active_handles = [0x00, 0x01]
         self._set_advertising_enable(False, active_handles)
 
     def _set_advertising_params(self, handle: int, properties: int,
@@ -664,7 +686,10 @@ class BleExtendedBackend(_BleBase):
                 time.sleep(0.1)
                 continue
                 
-            active_drones = [d for d in self._drones if getattr(d, 'active', True)]
+            active_drones = [
+                d for d in self._drones 
+                if getattr(d, 'active', True) and getattr(d, 'transport', None) in (None, "ble", "both", "all")
+            ]
             if not active_drones:
                 time.sleep(0.1)
                 continue
@@ -678,7 +703,12 @@ class BleExtendedBackend(_BleBase):
                 drone_key = drone.serial
                 send_sequence = self._build_send_sequence(drone_key, messages)
                 all_sequences.append((drone, messages, send_sequence))
-                if self.mode in ("ext-legacy", "dual"):
+                
+                drone_mode = getattr(drone, 'ble_mode', None)
+                if drone_mode:
+                    drone_mode = drone_mode.replace("_", "-")
+                effective_mode = drone_mode if drone_mode in ("ext-legacy", "legacy", "extended", "ble5", "dual") else self.mode
+                if effective_mode in ("ext-legacy", "legacy", "dual"):
                     total_legacy_messages += len(send_sequence)
 
             current_legacy_interval_ms = self.legacy_interval_ms
@@ -694,7 +724,12 @@ class BleExtendedBackend(_BleBase):
                     self._extended_counters = {}
                 counter = self._extended_counters.get(drone_key, 0)
 
-                if self.mode == "ext-legacy":
+                drone_mode = getattr(drone, 'ble_mode', None)
+                if drone_mode:
+                    drone_mode = drone_mode.replace("_", "-")
+                effective_mode = drone_mode if drone_mode in ("ext-legacy", "legacy", "extended", "ble5", "dual") else self.mode
+
+                if effective_mode in ("ext-legacy", "legacy"):
                     if self.optimize_params:
                         if not hasattr(self, '_last_configured_legacy_interval') or self._last_configured_legacy_interval != current_legacy_interval_ms:
                             self._set_advertising_enable(False, [0x00])
@@ -722,7 +757,7 @@ class BleExtendedBackend(_BleBase):
                         self._set_advertising_enable(False, [0x00])
                         counter = (counter + 1) & 0xFF
 
-                elif self.mode == "extended":
+                elif effective_mode in ("extended", "ble5"):
                     # Pure BT5: Extended Message Pack on Handle 1 (Coded PHY)
                     if not self.optimize_params:
                         self._set_advertising_enable(False, [0x01])

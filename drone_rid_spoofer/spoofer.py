@@ -211,6 +211,9 @@ class DroneSpoofer:
             lifespan_seconds = entry.get("lifespan_seconds", 0)
 
             drone_transport = entry.get("transport")
+            drone_ble_mode = entry.get("ble_mode")
+            drone_desc = entry.get("description") or entry.get("self_id")
+            drone_operator_id = entry.get("operator_id")
             timestamp_offset = entry.get("timestamp_offset_minutes", 0.0)
 
             drone = DroneState(
@@ -225,10 +228,13 @@ class DroneSpoofer:
                 waypoints=waypoints,
                 transport=drone_transport,
                 timestamp_offset=float(timestamp_offset),
+                ble_mode=drone_ble_mode,
+                description=drone_desc,
+                operator_id=drone_operator_id,
             )
             self._seed_kinematics(drone, overrides=self._extract_kinematic_overrides(entry))
             drones.append(drone)
-            logger.info(f"Drone {serial_bytes.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr} mode={mode}")
+            logger.info(f"Drone {serial_bytes.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr} mode={mode} ble_mode={drone_ble_mode}")
 
         return drones
 
