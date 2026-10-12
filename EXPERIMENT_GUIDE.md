@@ -82,16 +82,16 @@ Listen for an active real drone in the air, extract its verbatim static messages
 ### Commands:
 ```bash
 # Duplicate via BLE 5 Extended Advertising (sniffs BLE, broadcasts BLE 5)
-sudo .venv/bin/python3 takeover_figure8.py -i hci0 -t ble5
+sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t ble5
 
 # Duplicate via BLE 4 Legacy Advertising (sniffs BLE, broadcasts BLE 4)
-sudo .venv/bin/python3 takeover_figure8.py -i hci0 -t ble4
+sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t ble4
 
 # Duplicate via Wi-Fi Beacon (sniffs BLE or Wi-Fi, broadcasts Wi-Fi Beacon)
-sudo .venv/bin/python3 takeover_figure8.py -i hci0 -w wlan1 -t wifi
+sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -w wlan1 -t wifi
 
 # Duplicate via Wi-Fi NAN / Wi-Fi Aware (via Android bridge on port 8080)
-sudo .venv/bin/python3 takeover_figure8.py -i hci0 -t nan --nan-port 8080
+sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t nan --nan-port 8080
 ```
 
 ---
@@ -102,13 +102,13 @@ Execute the same Figure-8 duplication attack, but actively test data deduplicati
 ### Commands:
 ```bash
 # Skip ahead by +5 message counts (forces receiver to interpret broadcast as distinctly fresh)
-sudo .venv/bin/python3 takeover_figure8.py -i hci0 -t ble5 -o 5
+sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t ble5 -o 5
 
 # Replay using the exact same message counter as captured (-o 0)
-sudo .venv/bin/python3 takeover_figure8.py -i hci0 -t ble5 -o 0
+sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t ble5 -o 0
 
 # Negative offset: rewind message counter backward (note: use equals sign syntax --offset=-N)
-sudo .venv/bin/python3 takeover_figure8.py -i hci0 -t ble5 --offset=-5
+sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t ble5 --offset=-5
 ```
 
 ---
@@ -119,16 +119,16 @@ Tracks a target drone in real-time, computes its instantaneous velocity vector a
 ### Commands:
 ```bash
 # Predictive Hiding on BLE 5 spawning 7 decoy drones with random MAC addresses
-sudo .venv/bin/python3 takeover_predictive.py -i hci0 -t ble5 -n 7 --mac-mode random
+sudo .venv/bin/python3 attacks/takeover/takeover_predictive.py -i hci0 -t ble5 -n 7 --mac-mode random
 
 # Predictive Hiding on BLE 5 spawning 7 decoy drones hijacking the target's exact captured MAC
-sudo .venv/bin/python3 takeover_predictive.py -i hci0 -t ble5 -n 7 --mac-mode captured
+sudo .venv/bin/python3 attacks/takeover/takeover_predictive.py -i hci0 -t ble5 -n 7 --mac-mode captured
 
 # Predictive Hiding on Wi-Fi Beacon
-sudo .venv/bin/python3 takeover_predictive.py -i hci0 -w wlan1 -t wifi -n 7 --mac-mode random
+sudo .venv/bin/python3 attacks/takeover/takeover_predictive.py -i hci0 -w wlan1 -t wifi -n 7 --mac-mode random
 
 # Predictive Hiding on Wi-Fi NAN (Note: requires --mac-mode random; incompatible with captured MAC mode)
-sudo .venv/bin/python3 takeover_predictive.py -i hci0 -t nan --nan-port 8080 -n 7 --mac-mode random
+sudo .venv/bin/python3 attacks/takeover/takeover_predictive.py -i hci0 -t nan --nan-port 8080 -n 7 --mac-mode random
 ```
 
 ---
@@ -138,7 +138,7 @@ Injects high-frequency IEEE 802.11 Clear-To-Send (CTS) control frames containing
 
 ### Step 1: Compile the C injection binary:
 ```bash
-make -C evaluation
+make -C attacks/takeover
 ```
 
 ### Step 2: Configure interface to Monitor Mode and set frequency channel (e.g., channel 6):
@@ -151,10 +151,10 @@ sudo ip link set wlan1 up
 ### Step 3: Execute CTS jamming:
 ```bash
 # Spam CTS-to-Self using randomized MAC addresses with max NAV duration (32767 us)
-sudo ./evaluation/cts_inject wlan1 random 32767
+sudo ./attacks/takeover/cts_inject wlan1 random 32767
 
 # Spam CTS targeting a specific MAC address or BSSID
-sudo ./evaluation/cts_inject wlan1 00:11:22:33:44:55 32767
+sudo ./attacks/takeover/cts_inject wlan1 00:11:22:33:44:55 32767
 ```
 
 ---
@@ -173,13 +173,13 @@ Injects massive quantities of virtual drone identities into the RF environment b
 ### Commands:
 ```bash
 # Rapid swarm on Wi-Fi Beacon: 100 drones/wave, rotating every 3 seconds
-sudo .venv/bin/python3 ephemeral_swarm.py -t wifi -i wlan1 -d 3.0 -n 0.2
+sudo .venv/bin/python3 attacks/ephemeral_swarm.py -t wifi -i wlan1 -d 3.0 -n 0.2
 
 # Multi-transport flood: Broadcast across ALL transports (Wi-Fi=100 + BLE=15 + NAN=15) simultaneously, rotating every 5 seconds
-sudo .venv/bin/python3 ephemeral_swarm.py -t all -i wlan1 --ble-adapter hci0 --nan-port 8080 -d 5.0 -n 0.2
+sudo .venv/bin/python3 attacks/ephemeral_swarm.py -t all -i wlan1 --ble-adapter hci0 --nan-port 8080 -d 5.0 -n 0.2
 
 # Extreme saturation on Wi-Fi + BLE: custom batch sizes (50 Wi-Fi, 10 BLE), 1-second waves with no Self ID overhead
-sudo .venv/bin/python3 ephemeral_swarm.py -t both --wifi-batch 50 --ble-batch 10 -d 1.0 -n 0.1 --no-self-id
+sudo .venv/bin/python3 attacks/ephemeral_swarm.py -t both --wifi-batch 50 --ble-batch 10 -d 1.0 -n 0.1 --no-self-id
 ```
 
 ---
@@ -205,14 +205,14 @@ A comprehensive Over-The-Air (OTA) Remote ID fuzzing test suite designed to eval
 ### Commands:
 ```bash
 # Continuous automated fuzzing across ALL attack categories on Wi-Fi Beacon
-sudo .venv/bin/python3 fuzz_rid.py -t wifi -i wlan1 -f all -c 3.0
+sudo .venv/bin/python3 attacks/fuzz_rid.py -t wifi -i wlan1 -f all -c 3.0
 
 # Targeted Message Pack Header fuzzing simultaneously on Wi-Fi and BLE Extended Advertising
-sudo .venv/bin/python3 fuzz_rid.py -t both -i wlan1 --ble-adapter hci0 -f pack_header -c 2.0
+sudo .venv/bin/python3 attacks/fuzz_rid.py -t both -i wlan1 --ble-adapter hci0 -f pack_header -c 2.0
 
 # Stress-test receiver authentication pagination reassembly on BLE 5 with 3 concurrent drones
-sudo .venv/bin/python3 fuzz_rid.py -t ble --ble-adapter hci0 -f auth_pages -n 3 -c 4.0
+sudo .venv/bin/python3 attacks/fuzz_rid.py -t ble --ble-adapter hci0 -f auth_pages -n 3 -c 4.0
 
 # Test command injection & DOM XSS payload resilience across ALL transport mediums (Wi-Fi + BLE + NAN)
-sudo .venv/bin/python3 fuzz_rid.py -t all -i wlan1 --ble-adapter hci0 --nan-port 8080 -f string_inject
+sudo .venv/bin/python3 attacks/fuzz_rid.py -t all -i wlan1 --ble-adapter hci0 --nan-port 8080 -f string_inject
 ```

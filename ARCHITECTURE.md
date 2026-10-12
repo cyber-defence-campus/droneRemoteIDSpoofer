@@ -16,19 +16,16 @@ The codebase is structured as a Python package (`drone_rid_spoofer/`) with entry
 
 ```
 spoof_drones.py                         # Main entry-point CLI shim
-ephemeral_swarm.py                      # Multi-transport identity-rotation swarm saturation tool
-fuzz_rid.py                             # Over-the-air protocol & parser fuzzing harness
-takeover_figure8.py                     # Real-time drone sniffing and figure-8 trajectory takeover
-takeover_predictive.py                  # Real-time sniffing and Kalman-like predictive trajectory hiding
-sniffparser.py                          # ASTM F3411 packet dissector and sniffer parser
 interface-monitor.sh                    # Helper script for putting Wi-Fi interfaces into monitor mode
+scenario.json                           # Active local scenario configuration
 
-drone_rid_spoofer/
+drone_rid_spoofer/                      # Core Python library
 ├── __init__.py
 ├── __main__.py                         # python -m drone_rid_spoofer
 ├── cli.py                              # CLI argument parsing, scenario loading, backend factory
 ├── state.py                            # DroneState dataclass (kinematics, timers, coordinates)
 ├── messages.py                         # ASTM F3411-19/22 message builders (Types 0, 1, 2, 3, 4, 5, 0xF)
+├── parser.py                           # ASTM F3411 packet dissector and payload decoder
 ├── helpers.py                          # MAC/BLE generator, location math, coordinate parsing
 ├── spoofer.py                          # DroneSpoofer controller (manual WASD + automatic swarms)
 ├── takeover.py                         # Sniffing, session hijacking, and trajectory prediction engine
@@ -40,10 +37,20 @@ drone_rid_spoofer/
     ├── ble.py                          # BleLegacyBackend & BleExtendedBackend (raw Linux HCI sockets)
     └── nan.py                          # NanBridgeBackend (Android TCP) & NanManualBackend (raw 802.11 NAN)
 
+attacks/                                # Security attacks, takeover & exploit PoCs
+├── takeover/                           # Real-time session takeover (figure8, predictive, cts_inject)
+├── protocol/                           # Protocol weakness solvers (EASA Operator ID checksum)
+├── ephemeral_swarm.py                  # Identity-rotation swarm saturation tool
+└── fuzz_rid.py                         # OTA protocol & parser fuzzing harness
+
+evaluation/                             # Benchmarking & capacity plotting suite
+├── ble_capacity.py, wifi_capacity.py, run_ble_benchmark.py
+├── plot_common.py, plot_capacity.py, plot_ble_comparisons.py
+└── data/, plots/, comparison_plots/
+
 scenarios/                              # Pre-configured scenario JSON files
-NaN_Bridge/                             # Android app source for Android Wi-Fi Aware broadcasting
-evaluation/                             # Benchmarking suite (wifi_capacity.py, ble_capacity.py, cts_inject)
 replay/                                 # PCAP capture replay engine (replay_drones.py, pcap_to_replay.py)
+NaN_Bridge/                             # Android app source for Android Wi-Fi Aware broadcasting
 ```
 
 ---

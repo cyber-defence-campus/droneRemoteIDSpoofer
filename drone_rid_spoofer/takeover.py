@@ -9,7 +9,7 @@ import threading
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
-from sniffparser import ASTM_F3411_SpecParser
+from drone_rid_spoofer.parser import ASTM_F3411_SpecParser
 from scapy.all import sniff, Dot11Beacon, Dot11Elt
 from scapy.error import Scapy_Exception
 

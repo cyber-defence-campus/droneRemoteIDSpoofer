@@ -79,7 +79,7 @@ def main():
     os.makedirs(args.plot_dir, exist_ok=True)
 
     ble_capacity_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ble_capacity.py")
-    plot_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plot_ble_capacity.py")
+    plot_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plot_capacity.py")
 
     planned_runs = []
     if args.spec:

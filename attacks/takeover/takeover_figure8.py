@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+from datetime import datetime, timedelta
 import logging
 import math
+import os
 import struct
+import sys
 import time
-from datetime import datetime, timedelta
+
+# Ensure repository root is in sys.path
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.transport.ble import BleExtendedBackend, BleLegacyBackend

@@ -15,8 +15,14 @@ Tests parser memory resilience against:
 """
 import argparse
 import logging
+import os
 import sys
 import time
+
+# Ensure repository root is in sys.path
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
 from drone_rid_spoofer.cli import create_backends, DEFAULT_LAT, DEFAULT_LNG
 from drone_rid_spoofer.fuzz_generator import RidFuzzer, FuzzCategory

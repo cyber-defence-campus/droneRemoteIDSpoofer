@@ -198,12 +198,15 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
     if msg_type not in (0x0, 0x1, 0x2, 0x3, 0x4, 0x5):
         return None
 
+    is_zeroed = (len(block) >= 25 and block[1:25] == b'\x00' * 24)
+
     result: Dict[str, Any] = {
         "msg_type": msg_type,
         "type": MSG_TYPE_NAMES.get(msg_type, f"Unknown ({msg_type})"),
         "protocol_version": proto_ver,
         "proto_version_name": PROTO_VERSION_NAMES.get(proto_ver, f"Version {proto_ver}"),
         "raw_hex": block[:25].hex().upper(),
+        "is_zeroed": is_zeroed,
     }
 
     try:
@@ -485,40 +488,3 @@ class ASTM_F3411_SpecParser:
         return results
 
 
-# --- Scapy Sniffer Logic (Lazy Import) ---
-
-def packet_callback(pkt):
-    from scapy.all import Dot11Beacon, Dot11Elt
-    if pkt.haslayer(Dot11Beacon):
-        elt = pkt.getlayer(Dot11Elt)
-        while isinstance(elt, Dot11Elt):
-            if elt.ID == 221 and elt.info.startswith(b'\xfa\x0b\xbc'):
-                astm_payload = elt.info[5:]
-                try:
-                    parser = ASTM_F3411_SpecParser(astm_payload)
-                    data = parser.parse_payload()
-                    if data:
-                        chan_info = ""
-                        if pkt.haslayer("RadioTap"):
-                            try:
-                                freq = pkt.getlayer("RadioTap").ChannelFrequency
-                                if freq == 2484: chan = 14
-                                elif freq < 2484: chan = (freq - 2407) // 5
-                                elif freq > 5000: chan = (freq - 5000) // 5
-                                else: chan = freq
-                                chan_info = f", Ch: {chan}"
-                            except Exception:
-                                pass
-                        print(f"\n[+] Remote ID Detected from {pkt.addr2} (RSSI: {pkt.dBm_AntSignal}dBm{chan_info})")
-                        for entry in data:
-                            print(f"    - {entry}")
-                except Exception:
-                    pass
-            elt = elt.payload
-
-
-if __name__ == "__main__":
-    from scapy.all import sniff
-    interface = "wlx40ae30abad23"
-    print(f"[*] Starting Remote ID Scanner on {interface}...")
-    sniff(iface=interface, prn=packet_callback, store=0)

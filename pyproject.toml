@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drone-remote-id"
+version = "1.0.0"
+description = "Drone Remote ID (ASTM F3411 / OpenDroneID) Spoofer, Combined Multi-Band Scanner & Tactical Radar Dashboard"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Cyber-Defence Campus" }
+]
+keywords = ["drone", "remote-id", "astm-f3411", "opendroneid", "scanner", "radar", "spoofer", "ble5", "wifi-beacon"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+]
+
+dependencies = [
+    "scapy>=2.5.0",
+]
+
+[project.optional-dependencies]
+dashboard = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "websockets>=11.0",
+    "pydantic>=2.0",
+]
+all = [
+    "drone-remote-id[dashboard]",
+    "bleak>=0.20.0",
+]
+dev = [
+    "pytest>=7.0",
+    "httpx>=0.24.0",
+    "build>=1.0.0",
+]
+
+[project.scripts]
+drone-spoofer = "drone_rid_spoofer.cli:main"
+drone-replay = "replay.replay_drones:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "drone_rid_spoofer*",
+    "replay*",
+]
+exclude = [
+    "attacks*",
+    "evaluation*",
+    "scenarios*",
+    "scratch*",
+    "tests*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+norecursedirs = ["scratch", ".venv", "build", "dist"]

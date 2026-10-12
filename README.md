@@ -37,11 +37,9 @@ It generates raw 802.11 beacon frames and BLE advertisements containing ASTM F34
 ### Install
 
 ```bash
-git clone https://github.com/cyber-defence-campus/droneRemoteIDSpoofer.git
-cd droneRemoteIDSpoofer
 python3 -m venv .venv
 source .venv/bin/activate
-pip install scapy
+pip install -e ".[all]"
 ```
 
 ### Run your first spoof - Single drone
@@ -223,14 +221,9 @@ CLI flags override values from scenario config files.
 
 In addition to `spoof_drones.py`, the repository includes specialized security evaluation, fuzzing, scanning, and takeover modules:
 
-- **Combined Remote ID Sniffer & DB Logger (`scanner/`)**: Real-time simultaneous Wi-Fi Beacon and BLE sniffer with live curses telemetry dashboard, message pack parser, SQLite database logging (`rid_capture.db`), and CLI query tool (`query_rid_db.py`). See [scanner/README.md](scanner/README.md).
-- **Capacity & RF Benchmarking Suite (`evaluation/`)**: Automated multi-mode benchmark orchestrator (`run_ble_benchmark.py`), high-speed raw socket Wi-Fi sniffer (`wifi_capacity.py`), and BLE capacity tester (`ble_capacity.py`) with publication-ready plotting scripts.
-- **Receiver Vulnerability PoCs (`experiments/`)**: Targeted proof-of-concept injection and fuzzing scripts evaluating parser vulnerabilities and web UI flaws across specific receiver hardware/apps (DroneAware, DroneScout, SkySpy, Sparrow).
-- **Ephemeral Swarm (`ephemeral_swarm.py`)**: High-density identity rotation and multi-transport saturation testing across Wi-Fi, BLE, and NAN.
-- **OTA Fuzzing Suite (`fuzz_rid.py`)**: Automated fuzzing suite for testing receiver resilience against malformed ASTM payloads, XSS/command injection strings, and pagination buffer overflows.
-- **Airborne Takeover (`takeover_figure8.py` & `takeover_predictive.py`)**: Real-time drone duplication, takeover simulation, and predictive trajectory hiding overlays.
-- **PCAP Replay Engine (`replay/replay_drones.py`)**: Replay captured raw 802.11 / BLE Remote ID telemetry from PCAP recordings.
-- **Wi-Fi CTS Jammer (`evaluation/cts_inject`)**: C-based NAV duration CTS reservation tool to evaluate channel contention under jamming.
+- **Capacity & RF Benchmarking Suite (`evaluation/`)**: Automated multi-mode benchmark orchestrator (`run_ble_benchmark.py`), Wi-Fi capacity tester (`wifi_capacity.py`), and BLE capacity tester (`ble_capacity.py`) with unified plotting engine (`plot_capacity.py`, `plot_ble_comparisons.py`). See [evaluation/README.md](evaluation/README.md).
+- **Offensive Security Attacks & Exploit Verification (`attacks/`)**: Comprehensive suite containing real-time drone session takeover (`attacks/takeover/`), EASA registration checksum collision solver (`attacks/protocol/`), ephemeral swarm identity flood (`attacks/ephemeral_swarm.py`), and OTA protocol mutation fuzzer (`attacks/fuzz_rid.py`). See [attacks/README.md](attacks/README.md).
+- **PCAP Replay Engine (`replay/`)**: Replay captured raw 802.11 / BLE Remote ID telemetry from PCAP recordings (`replay/replay_drones.py`).
 
 For comprehensive experiment workflows, parameter guides, and command examples, see the [EXPERIMENT_GUIDE.md](EXPERIMENT_GUIDE.md).
 

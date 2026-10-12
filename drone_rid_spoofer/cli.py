@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ble-adapter", type=str, default=None,
                         help="BLE adapter name (default: hci0). If BLE transport is used")
     parser.add_argument("--ble-interval", type=int, default=None,
-                        help="Interval for BLE 4 legacy advertisements in ms (default: 200)")
+                        help="Interval for BLE 4 legacy advertisements in ms (default: 100)")
     parser.add_argument("--ble-extended-interval", type=int, default=None,
                         help="Interval override for BLE 5 extended advertisements in ms (default: same as --ble-interval)")
     parser.add_argument("--ble-mode", type=str, default=None,
@@ -188,7 +188,7 @@ def main() -> None:
             args.ble_adapter = ble_config.get("adapter", "hci0")
         
         if args.ble_interval is None:
-            args.ble_interval = ble_config.get("advertising_interval_ms", 200)
+            args.ble_interval = ble_config.get("advertising_interval_ms", 100)
             
         if args.ble_extended_interval is None:
             args.ble_extended_interval = ble_config.get("extended_interval_ms", args.ble_interval)

@@ -74,7 +74,14 @@ class NrfSnifferThread(threading.Thread):
         subprocess.run(["killall", "-9", "nrfutil", "nrfutil-ble-sniffer", "nrfutil-ble-sni"], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
         time.sleep(0.5)
         
-        cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nrf_bt_sniffer_json.py")]
+        eval_dir = os.path.dirname(os.path.abspath(__file__))
+        candidate_paths = [
+            os.path.join(eval_dir, "..", "scanner", "sniffers", "nrf_bt_sniffer_json.py"),
+            os.path.join(eval_dir, "..", "scanner", "nrf_bt_sniffer_json.py"),
+            os.path.join(eval_dir, "nrf_bt_sniffer_json.py"),
+        ]
+        nrf_script = next((p for p in candidate_paths if os.path.exists(p)), candidate_paths[0])
+        cmd = [sys.executable, nrf_script]
         if self.nrf_port:
             cmd.extend(["--nrf-port", self.nrf_port])
         elif self.rx_pcap and os.path.exists(self.rx_pcap):
@@ -795,7 +802,7 @@ def main():
     parser.add_argument("--consecutive-misses", type=int, default=2, help="Terminate sweep early when 100%% of deadlines are missed for N consecutive drone counts (default: 2; 0 to disable)")
     parser.add_argument("--duration", type=float, default=10.0, help="Duration per test in seconds")
     parser.add_argument("--interval", type=float, default=1.0, help="Main spoofer update interval in seconds")
-    parser.add_argument("--ble-interval-ms", type=int, default=200, help="Default BLE advertising interval in ms")
+    parser.add_argument("--ble-interval-ms", type=int, default=100, help="Default BLE advertising interval in ms")
     parser.add_argument("--legacy-interval-ms", type=int, default=None, help="BLE 4 legacy advertising interval in ms (overrides --ble-interval-ms for legacy/dual)")
     parser.add_argument("--extended-interval-ms", type=int, default=None, help="BLE 5 extended advertising interval in ms (overrides --ble-interval-ms for extended/dual)")
     parser.add_argument("--rx-mode", choices=["auto", "ble4", "ble5"], default="auto", help="Sniffer capture mode: 'ble5' (Coded PHY), 'ble4' (1M Legacy), or 'auto'")

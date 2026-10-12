@@ -9,30 +9,19 @@ from typing import Dict, Any, List, Optional
 
 from scapy.all import PcapReader, Dot11
 
+import os
+
+# Ensure repo root is in sys.path
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from drone_rid_spoofer.parser import parse_astm_payload
+
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 WIFI_SIG = b'\xfa\x0b\xbc\x0d'
 BLE_SIG = b'\xfa\xff\x0d'
-
-def extract_messages(msgs_raw: bytes, msg_count: int) -> List[str]:
-    """Extract 25-byte messages and base64 encode them."""
-    encoded_msgs = []
-    for i in range(msg_count):
-        offset = i * 25
-        if offset + 25 <= len(msgs_raw):
-            msg = msgs_raw[offset:offset+25]
-            encoded_msgs.append(base64.b64encode(msg).decode('ascii'))
-    return encoded_msgs
-
-def try_extract_serial(msgs_raw: bytes, msg_count: int) -> Optional[str]:
-    for i in range(msg_count):
-        offset = i * 25
-        if offset + 25 <= len(msgs_raw):
-            msg = msgs_raw[offset:offset+25]
-            if (msg[0] >> 4) == 0x0: # Basic ID
-                serial_bytes = msg[2:22]
-                return serial_bytes.decode('ascii', errors='ignore').rstrip('\x00')
-    return None
 
 def process_pcap(pcap_path: str, output_path: str) -> None:
     try:
@@ -78,98 +67,69 @@ def process_pcap(pcap_path: str, output_path: str) -> None:
         
         # Check Wi-Fi Vendor Specific
         idx = raw.find(WIFI_SIG)
-        if idx != -1 and idx + 7 < len(raw):
+        if idx != -1 and idx + 5 < len(raw):
             counter = raw[idx+4]
-            pack_hdr = raw[idx+5]
-            if (pack_hdr >> 4) == 0xF and raw[idx+6] == 0x19:
-                msg_count = raw[idx+7]
-                expected_len = msg_count * 25
-                if idx + 8 + expected_len <= len(raw):
-                    msgs_raw = raw[idx+8 : idx+8+expected_len]
-                    
-                    event = {
-                        "time_offset_ms": time_offset_ms,
-                        "transport": "wifi",
-                        "counter": counter,
-                        "messages_b64": extract_messages(msgs_raw, msg_count),
-                        "mac": mac_addr,
-                        "channel": channel_val
-                    }
-                    if ssid_val is not None:
-                        event["ssid_b64"] = base64.b64encode(ssid_val).decode('ascii')
-                    
-                    serial = try_extract_serial(msgs_raw, msg_count)
-                    if serial and mac_addr:
-                        mac_to_serial[mac_addr] = serial
+            astm_data = raw[idx+5:]
+            parsed_msgs, msgs_b64 = parse_astm_payload(astm_data)
+            if parsed_msgs and msgs_b64:
+                event = {
+                    "time_offset_ms": time_offset_ms,
+                    "transport": "wifi",
+                    "counter": counter,
+                    "messages_b64": msgs_b64,
+                    "mac": mac_addr,
+                    "channel": channel_val
+                }
+                if ssid_val is not None:
+                    event["ssid_b64"] = base64.b64encode(ssid_val).decode('ascii')
+                
+                for msg in parsed_msgs:
+                    if msg.get("type") == "Basic ID" and msg.get("id") and mac_addr:
+                        mac_to_serial[mac_addr] = msg["id"]
         
         # Check BLE Service Data
         if event is None:
             idx = raw.find(BLE_SIG)
             if idx != -1 and idx + 4 < len(raw):
                 counter = raw[idx+3]
-                next_byte = raw[idx+4]
-                
-                if (next_byte >> 4) == 0xF:
-                    # Potential Message Pack
-                    if idx + 6 < len(raw) and raw[idx+5] == 0x19:
-                        msg_count = raw[idx+6]
-                        expected_len = msg_count * 25
-                        if idx + 7 + expected_len <= len(raw):
-                            msgs_raw = raw[idx+7 : idx+7+expected_len]
-                            event = {
-                                "time_offset_ms": time_offset_ms,
-                                "transport": "bt5",
-                                "counter": counter,
-                                "messages_b64": extract_messages(msgs_raw, msg_count)
-                            }
-                            serial = try_extract_serial(msgs_raw, msg_count)
-                            if serial and mac_addr:
-                                mac_to_serial[mac_addr] = serial
-                else:
-                    # Legacy Single Message
-                    if idx + 4 + 25 <= len(raw):
-                        msgs_raw = raw[idx+4 : idx+4+25]
-                        event = {
-                            "time_offset_ms": time_offset_ms,
-                            "transport": "bt4",
-                            "counter": counter,
-                            "messages_b64": extract_messages(msgs_raw, 1)
-                        }
-                        serial = try_extract_serial(msgs_raw, 1)
-                        if serial and mac_addr:
-                            mac_to_serial[mac_addr] = serial
+                astm_data = raw[idx+4:]
+                parsed_msgs, msgs_b64 = parse_astm_payload(astm_data)
+                if parsed_msgs and msgs_b64:
+                    msg_type = (astm_data[0] >> 4) if len(astm_data) > 0 else None
+                    transport = "bt5" if (msg_type == 0xF or len(msgs_b64) > 1) else "bt4"
+                    event = {
+                        "time_offset_ms": time_offset_ms,
+                        "transport": transport,
+                        "counter": counter,
+                        "messages_b64": msgs_b64
+                    }
+                    for msg in parsed_msgs:
+                        if msg.get("type") == "Basic ID" and msg.get("id") and mac_addr:
+                            mac_to_serial[mac_addr] = msg["id"]
                             
         # Look for pure Message Pack (e.g. NAN without OUI)
         if event is None:
-            # We look for [counter, pack_header, 0x19, msg_count] 
-            # This is risky due to false positives, but we can do a heuristic
             for i in range(len(raw) - 4):
                 pack_hdr = raw[i+1]
                 if (pack_hdr >> 4) == 0xF and raw[i+2] == 0x19:
-                    msg_count = raw[i+3]
-                    # Ensure msg_count is reasonable (e.g., 1 to 10)
-                    if 1 <= msg_count <= 10:
-                        expected_len = msg_count * 25
-                        if i + 4 + expected_len <= len(raw):
-                            # Validate first message has valid type
-                            first_msg_type = raw[i+4] >> 4
-                            if 0 <= first_msg_type <= 5:
-                                msgs_raw = raw[i+4 : i+4+expected_len]
-                                counter = raw[i]
-                                event = {
-                                    "time_offset_ms": time_offset_ms,
-                                    "transport": "nan",
-                                    "counter": counter,
-                                    "messages_b64": extract_messages(msgs_raw, msg_count),
-                                    "mac": mac_addr,
-                                    "channel": channel_val
-                                }
-                                if ssid_val is not None:
-                                    event["ssid_b64"] = base64.b64encode(ssid_val).decode('ascii')
-                                serial = try_extract_serial(msgs_raw, msg_count)
-                                if serial and mac_addr:
-                                    mac_to_serial[mac_addr] = serial
-                                break
+                    counter = raw[i]
+                    astm_data = raw[i+1:]
+                    parsed_msgs, msgs_b64 = parse_astm_payload(astm_data)
+                    if parsed_msgs and msgs_b64:
+                        event = {
+                            "time_offset_ms": time_offset_ms,
+                            "transport": "nan",
+                            "counter": counter,
+                            "messages_b64": msgs_b64,
+                            "mac": mac_addr,
+                            "channel": channel_val
+                        }
+                        if ssid_val is not None:
+                            event["ssid_b64"] = base64.b64encode(ssid_val).decode('ascii')
+                        for msg in parsed_msgs:
+                            if msg.get("type") == "Basic ID" and msg.get("id") and mac_addr:
+                                mac_to_serial[mac_addr] = msg["id"]
+                        break
                                 
         if event:
             # Enrich with serial if known
