@@ -20,6 +20,7 @@ from drone_rid_spoofer.helpers import (
     random_speed,
     random_vertical_speed,
 )
+from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.messages import build_all_messages
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
@@ -34,6 +35,7 @@ class DroneSpoofer:
         self.args = args
         self.backends = backends
         self.base_location = args.location
+        self._gen_lock: Optional[GenerationLock] = None
         self._setup_logging()
 
     def _setup_logging(self) -> None:
@@ -69,9 +71,10 @@ class DroneSpoofer:
         stdin_fd = sys.stdin.fileno()
         original_settings = termios.tcgetattr(stdin_fd)
         
+        self._gen_lock = GenerationLock()
         builder = self._get_packet_builder()
         for backend in self.backends:
-            backend.start([drone], builder)
+            backend.start([drone], builder, self._gen_lock)
 
         try:
             tty.setcbreak(stdin_fd)
@@ -119,7 +122,8 @@ class DroneSpoofer:
 
         if key in key_map:
             direction = key_map[key]
-            drone.move(direction, 1000)
+            with self._gen_lock.write():
+                drone.move(direction, 1000)
             logger.info(f"Moved {direction.upper()}")
 
     def run_automatic_mode(self) -> None:
@@ -253,36 +257,45 @@ class DroneSpoofer:
             if getattr(drone, 'lifespan_seconds', 0) > 0:
                 drone.end_time = loop_start_time + timedelta(seconds=drone.lifespan_seconds)
                 
+        self._gen_lock = GenerationLock()
         builder = self._get_packet_builder()
         for backend in self.backends:
-            backend.start(drones, builder)
-                
+            backend.start(drones, builder, self._gen_lock)
+
         next_tick = time.time()
         packet_batch_count = 0
 
         try:
             while True:
-                active_count = 0
                 dt_now = datetime.now()
-                
-                # 1. Process all drones in this batch
-                for drone in drones:
-                    if drone.end_time and dt_now >= drone.end_time:
-                        if drone.active:
-                            logger.info(f"Drone {drone.serial.decode()} expired; stopping transmission")
-                            drone.active = False
-                            for backend in self.backends:
-                                backend.remove_drone(drone)
-                        continue
-                    if not drone.active:
-                        continue
-                        
-                    active_count += 1
-                    if drone.mode == "random":
-                        drone.update_location(10000)
-                        drone.drift_kinematics()
-                    elif drone.mode == "waypoints":
-                        self._update_waypoints(drone, dt_now)
+                expired: List[DroneState] = []
+
+                # 1. Advance all drone state as the single writer, under the
+                #    generation lock so backend readers never see a torn update.
+                with self._gen_lock.write():
+                    active_count = 0
+                    for drone in drones:
+                        if drone.end_time and dt_now >= drone.end_time:
+                            if drone.active:
+                                drone.active = False
+                                expired.append(drone)
+                            continue
+                        if not drone.active:
+                            continue
+
+                        active_count += 1
+                        if drone.mode == "random":
+                            drone.update_location(10000)
+                            drone.drift_kinematics()
+                        elif drone.mode == "waypoints":
+                            self._update_waypoints(drone, dt_now)
+
+                # Backend-internal cleanup for expired drones runs outside the
+                # write lock (it touches only per-backend bookkeeping).
+                for drone in expired:
+                    logger.info(f"Drone {drone.serial.decode()} expired; stopping transmission")
+                    for backend in self.backends:
+                        backend.remove_drone(drone)
 
                 packet_batch_count += 1
                 logger.info(f"Sent batch {packet_batch_count} ({active_count} active drones)")
