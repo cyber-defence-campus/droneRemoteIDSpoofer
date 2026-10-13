@@ -31,7 +31,7 @@ from typing import Dict, List, Optional
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
-from drone_rid_spoofer.transport.base import TransportBackend
+from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ class _BleBase(TransportBackend):
         self._legacy_counters: Dict[str, int] = {}  # per-drone message sequence counter (legacy)
         self._extended_counters: Dict[str, int] = {}  # per-drone message sequence counter (extended)
         self._drones = []
-        self._packet_builder = None
+        self._packet_builder: Optional[PacketBuilder] = None
         self._running = False
         self._thread = None
         self._open_socket()
@@ -161,7 +161,7 @@ class _BleBase(TransportBackend):
 
         logger.info(f"BLE backend: opened HCI socket on {self.adapter}")
 
-    def start(self, drones: List[DroneState], packet_builder) -> None:
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
         self._drones = drones
         self._packet_builder = packet_builder
         self._running = True
@@ -551,7 +551,7 @@ class BleExtendedBackend(_BleBase):
             self.optimize_params = optimize_params
         super().__init__(adapter, effective_extended_interval, protocol_version, fuzz_config=fuzz_config)
 
-    def start(self, drones: List[DroneState], packet_builder) -> None:
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
         self._drones = drones
         has_ext_legacy = any(getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones)
         has_extended = any(getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones)

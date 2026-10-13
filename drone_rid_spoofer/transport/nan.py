@@ -15,7 +15,7 @@ from scapy.all import RadioTap
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
-from drone_rid_spoofer.transport.base import TransportBackend
+from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +40,11 @@ class NanBridgeBackend(TransportBackend):
         self._stop_event = threading.Event()
         self._listener_thread = None
         self._drones = []
-        self._packet_builder = None
+        self._packet_builder: Optional[PacketBuilder] = None
         self._transmit_thread = None
         self._connect()
 
-    def start(self, drones: List[DroneState], packet_builder) -> None:
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
         self._drones = drones
         self._packet_builder = packet_builder
         self._transmit_thread = threading.Thread(target=self._transmit_loop, daemon=True)
@@ -302,7 +302,7 @@ class NanManualBackend(TransportBackend):
         self._msg_counters: Dict[bytes, int] = {}
         self._running = False
         self._drones: List[DroneState] = []
-        self._packet_builder = None
+        self._packet_builder: Optional[PacketBuilder] = None
         self._thread: Optional[threading.Thread] = None
         self.missed_deadlines = 0
 
@@ -310,7 +310,7 @@ class NanManualBackend(TransportBackend):
             f"NanManualBackend initialized on {self.interface} | Cluster: {self.cluster_id_str} | Instance ID: 0x{self.instance_id:02X}"
         )
 
-    def start(self, drones: List[DroneState], packet_builder) -> None:
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
         self._drones = drones
         self._packet_builder = packet_builder
         self._running = True

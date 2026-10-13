@@ -3,14 +3,14 @@ import socket
 import subprocess
 import threading
 import time
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 
 from scapy.all import sendp
 import scapy.layers.dot11 as dot11
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
-from drone_rid_spoofer.transport.base import TransportBackend
+from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +62,12 @@ class WifiBackend(TransportBackend):
         self._lock = threading.Lock()
         self._running = False
         self._drones = []
-        self._packet_builder = None
+        self._packet_builder: Optional[PacketBuilder] = None
         self._thread = None
         self.missed_deadlines = 0
         logger.info(f"Wi-Fi backend initialized on {interface} with {self.beacon_interval*1000:.0f}ms beacon interval")
 
-    def start(self, drones: List[DroneState], packet_builder) -> None:
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
         self._drones = drones
         self._packet_builder = packet_builder
         self._running = True
@@ -119,23 +119,7 @@ class WifiBackend(TransportBackend):
                     
                 serial = drone.serial
                 mac_addr = drone.mac_address.upper()
-                
-                # Check for fuzzing mutations
-                if self.fuzz_config and self.fuzz_config.get("enabled"):
-                    # Pass through the whole Scapy layer pipeline if mutating/fuzzing
-                    beacon_payload = self._packet_builder.build_messages(drone)
-                    mac_header = dot11.Dot11(addr1=self.DEST_ADDR, addr2=drone.mac_address, addr3=drone.mac_address)
-                    beacon_base = dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf)
-                    ie_ssid = dot11.Dot11Elt(ID='SSID', info=self.SSID_PREFIX + serial, len=len(self.SSID_PREFIX + serial))
-                    vendor_ie = self._build_vendor_specific_ie(beacon_payload)
-                    frame_scapy = mac_header / beacon_base / ie_ssid / ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr / vendor_ie
-                    mutated_frame = self._mutate_packet(frame_scapy)
-                    
-                    radiotap = dot11.RadioTap(present='Rate', Rate=effective_rate)
-                    frame = bytes(radiotap) + bytes(mutated_frame)
-                    packets.append(frame)
-                    continue
-                
+
                 # Build ASTM messages from current drone state
                 messages = self._packet_builder(drone)
                 

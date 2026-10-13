@@ -1,7 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Callable, List
 
 from drone_rid_spoofer.state import DroneState
+
+# The one contract every backend expects from a packet builder: a plain callable
+# that maps a drone's current state to its list of ASTM message payloads. Kept as
+# a named alias so the backends and their callers can't silently drift apart.
+PacketBuilder = Callable[[DroneState], List[bytes]]
 
 
 class TransportBackend(ABC):
@@ -11,12 +16,13 @@ class TransportBackend(ABC):
         self.fuzz_config = fuzz_config or {}
 
     @abstractmethod
-    def start(self, drones: List[DroneState], packet_builder) -> None:
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
         """Start the backend transmission thread.
 
         Args:
             drones: Shared list of drone states to transmit.
-            packet_builder: A callable `f(drone)` that generates ASTM messages on the fly.
+            packet_builder: A callable `f(drone) -> list[bytes]` that generates
+                the ASTM message payloads for a drone on the fly.
         """
 
     @abstractmethod

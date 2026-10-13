@@ -22,7 +22,7 @@ from drone_rid_spoofer.helpers import (
 )
 from drone_rid_spoofer.messages import build_all_messages
 from drone_rid_spoofer.state import DroneState
-from drone_rid_spoofer.transport.base import TransportBackend
+from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class DroneSpoofer:
         level = logging.DEBUG if getattr(self.args, 'verbose', False) else logging.INFO
         logging.getLogger().setLevel(level)
 
-    def _get_packet_builder(self):
+    def _get_packet_builder(self) -> PacketBuilder:
         """Return a callable that generates ASTM messages for a drone."""
         return lambda drone: build_all_messages(
             drone,
