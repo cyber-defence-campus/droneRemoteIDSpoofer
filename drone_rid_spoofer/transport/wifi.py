@@ -10,6 +10,7 @@ import scapy.layers.dot11 as dot11
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
+from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
@@ -67,9 +68,9 @@ class WifiBackend(TransportBackend):
         self.missed_deadlines = 0
         logger.info(f"Wi-Fi backend initialized on {interface} with {self.beacon_interval*1000:.0f}ms beacon interval")
 
-    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
-        self._drones = drones
-        self._packet_builder = packet_builder
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
+              gen_lock: Optional[GenerationLock] = None) -> None:
+        self._bind(drones, packet_builder, gen_lock)
         self._running = True
         self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
         self._thread.start()
@@ -113,16 +114,10 @@ class WifiBackend(TransportBackend):
             beacon_base_bytes = bytes(dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf))
             
             t_build_start = time.time()
-            for drone in self._drones:
-                if not getattr(drone, 'active', True):
-                    continue
-                    
+            for drone, messages in self._active_packets():
                 serial = drone.serial
                 mac_addr = drone.mac_address.upper()
 
-                # Build ASTM messages from current drone state
-                messages = self._packet_builder(drone)
-                
                 # Handle sequence and counters
                 seq_num = self._seq_nums.get(serial, 0)
                 self._seq_nums[serial] = (seq_num + 1) % 4096

@@ -15,6 +15,7 @@ from scapy.all import RadioTap
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
+from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
@@ -44,9 +45,9 @@ class NanBridgeBackend(TransportBackend):
         self._transmit_thread = None
         self._connect()
 
-    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
-        self._drones = drones
-        self._packet_builder = packet_builder
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
+              gen_lock: Optional[GenerationLock] = None) -> None:
+        self._bind(drones, packet_builder, gen_lock)
         self._transmit_thread = threading.Thread(target=self._transmit_loop, daemon=True)
         self._transmit_thread.start()
         logging.info(f"NAN backend background thread started with {self.update_interval}s interval")
@@ -132,10 +133,7 @@ class NanBridgeBackend(TransportBackend):
             
         next_tick = time.time()
         while not self._stop_event.is_set():
-            for drone in self._drones:
-                if not getattr(drone, 'active', True):
-                    continue
-                
+            for drone, messages in self._active_packets():
                 # Initialize the drone on the Android bridge if not already done
                 if drone.mac_address not in self._configured_drones:
                     config_cmd = {
@@ -145,7 +143,6 @@ class NanBridgeBackend(TransportBackend):
                     self._send_command(config_cmd)
                     self._configured_drones.add(drone.mac_address)
 
-                messages = self._packet_builder(drone)
                 drone_key = drone.mac_address
                 
                 if hasattr(drone, 'counter_override') and drone.counter_override is not None:
@@ -310,9 +307,9 @@ class NanManualBackend(TransportBackend):
             f"NanManualBackend initialized on {self.interface} | Cluster: {self.cluster_id_str} | Instance ID: 0x{self.instance_id:02X}"
         )
 
-    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
-        self._drones = drones
-        self._packet_builder = packet_builder
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
+              gen_lock: Optional[GenerationLock] = None) -> None:
+        self._bind(drones, packet_builder, gen_lock)
         self._running = True
         self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
         self._thread.start()
@@ -456,10 +453,7 @@ class NanManualBackend(TransportBackend):
             tsf_us = int(now_ts * 1_000_000) % (2**64)
             ambtt_us = (current_epoch * TSF_EPOCH_US) & 0xFFFFFFFF
 
-            for drone in self._drones:
-                if not getattr(drone, "active", True):
-                    continue
-
+            for drone, messages in self._active_packets():
                 serial = drone.serial
                 drone_mac = self._mac_str_to_bytes(drone.mac_address)
 
@@ -486,8 +480,6 @@ class NanManualBackend(TransportBackend):
                     time.sleep(0.0005 + random.random() * 0.0095)
 
                     # 2. Inject Service Discovery Frame (SDF) inside DW
-                    messages = self._packet_builder(drone)
-                    
                     if self.fuzz_config and self.fuzz_config.get("raw_injection"):
                         # SPARROW-03 PoC: Bypass SDF construction and inject raw malformed IEEE 802.11 byte array directly
                         # We must include the radiotap header for the monitor mode socket to accept it

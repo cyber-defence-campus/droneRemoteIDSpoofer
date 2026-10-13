@@ -31,6 +31,7 @@ from typing import Dict, List, Optional
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
+from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
@@ -161,9 +162,9 @@ class _BleBase(TransportBackend):
 
         logger.info(f"BLE backend: opened HCI socket on {self.adapter}")
 
-    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
-        self._drones = drones
-        self._packet_builder = packet_builder
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
+              gen_lock: Optional[GenerationLock] = None) -> None:
+        self._bind(drones, packet_builder, gen_lock)
         self._running = True
         self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
         self._thread.start()
@@ -451,8 +452,8 @@ class BleLegacyBackend(_BleBase):
                 time.sleep(0.1)
                 continue
                 
-            active_drones = [d for d in self._drones if getattr(d, 'active', True)]
-            if not active_drones:
+            active_packets = self._active_packets()
+            if not active_packets:
                 time.sleep(0.1)
                 continue
 
@@ -460,8 +461,7 @@ class BleLegacyBackend(_BleBase):
 
             all_sequences = []
             total_messages = 0
-            for drone in active_drones:
-                messages = self._packet_builder(drone)
+            for drone, messages in active_packets:
                 drone_key = drone.serial
                 send_sequence = self._build_send_sequence(drone_key, messages)
                 all_sequences.append((drone, send_sequence))
@@ -551,13 +551,14 @@ class BleExtendedBackend(_BleBase):
             self.optimize_params = optimize_params
         super().__init__(adapter, effective_extended_interval, protocol_version, fuzz_config=fuzz_config)
 
-    def start(self, drones: List[DroneState], packet_builder: PacketBuilder) -> None:
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
+              gen_lock: Optional[GenerationLock] = None) -> None:
         self._drones = drones
         has_ext_legacy = any(getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones)
         has_extended = any(getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones)
         if (has_ext_legacy and self.mode == "extended") or (has_extended and self.mode == "ext-legacy"):
             self._init_advertising()
-        super().start(drones, packet_builder)
+        super().start(drones, packet_builder, gen_lock)
 
     def _init_advertising(self) -> None:
         """Initialize extended advertising sets based on configured mode."""
@@ -686,11 +687,11 @@ class BleExtendedBackend(_BleBase):
                 time.sleep(0.1)
                 continue
                 
-            active_drones = [
-                d for d in self._drones 
-                if getattr(d, 'active', True) and getattr(d, 'transport', None) in (None, "ble", "both", "all")
+            active_packets = [
+                (d, m) for d, m in self._active_packets()
+                if getattr(d, 'transport', None) in (None, "ble", "both", "all")
             ]
-            if not active_drones:
+            if not active_packets:
                 time.sleep(0.1)
                 continue
 
@@ -698,8 +699,7 @@ class BleExtendedBackend(_BleBase):
 
             all_sequences = []
             total_legacy_messages = 0
-            for drone in active_drones:
-                messages = self._packet_builder(drone)
+            for drone, messages in active_packets:
                 drone_key = drone.serial
                 send_sequence = self._build_send_sequence(drone_key, messages)
                 all_sequences.append((drone, messages, send_sequence))
