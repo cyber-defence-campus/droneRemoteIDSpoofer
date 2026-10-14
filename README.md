@@ -39,7 +39,7 @@ It generates raw 802.11 beacon frames and BLE advertisements containing ASTM F34
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[all]"
+pip install -e .          # add [dev] for pytest/build tooling
 ```
 
 ### Run your first spoof - Single drone
