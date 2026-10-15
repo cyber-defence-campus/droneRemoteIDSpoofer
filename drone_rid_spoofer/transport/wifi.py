@@ -106,6 +106,7 @@ class WifiBackend(TransportBackend):
 
         next_tick = time.time()
         while self._running:
+            self._drain_removals()
             t_loop_start = time.time()
             packets = []
             current_tsf = int(time.time() * 1000000) % (2**64)
@@ -196,8 +197,8 @@ class WifiBackend(TransportBackend):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-    def remove_drone(self, drone: DroneState) -> None:
-        """Remove drone sequence numbers when expired."""
+    def _cleanup_drone(self, drone: DroneState) -> None:
+        """Remove drone sequence numbers when expired (transmit thread)."""
         self._seq_nums.pop(drone.serial, None)
         self._msg_counters.pop(drone.serial, None)
 

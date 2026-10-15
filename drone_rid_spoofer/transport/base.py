@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Callable, List, Optional, Tuple
+from collections import deque
+from typing import Callable, Deque, List, Optional, Tuple
 
 from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.state import DroneState
@@ -23,6 +24,12 @@ class TransportBackend(ABC):
         # compare instead of re-encoding every ASTM message each tick.
         self._pkt_cache_gen: int = -1
         self._pkt_cache_list: List[Tuple[DroneState, List[bytes]]] = []
+        # Drones the controller has asked to remove. The controller thread only
+        # appends here; the transmit thread drains it via `_drain_removals` and
+        # performs the actual per-backend cleanup. This keeps every bookkeeping
+        # dict mutated by exactly one thread (deque append/popleft are atomic in
+        # CPython), instead of the controller and transmit threads racing on it.
+        self._pending_removals: "Deque[DroneState]" = deque()
 
     @abstractmethod
     def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
@@ -82,5 +89,31 @@ class TransportBackend(ABC):
         return self._pkt_cache_list
 
     def remove_drone(self, drone: DroneState) -> None:
-        """Remove and cleanup resources for an expired drone."""
+        """Request cleanup of an expired drone. Safe to call from any thread.
+
+        Called by the controller thread. The actual cleanup is deferred to the
+        transmit thread (see :meth:`_drain_removals`) so per-backend bookkeeping
+        is only ever mutated by the thread that also builds and sends packets.
+        """
+        self._pending_removals.append(drone)
+
+    def _drain_removals(self) -> None:
+        """Perform any pending drone cleanups. Call from the transmit thread.
+
+        Must be invoked at the top of each transmit cycle so bookkeeping for
+        removed drones is reclaimed on the same thread that reads it.
+        """
+        while True:
+            try:
+                drone = self._pending_removals.popleft()
+            except IndexError:
+                break
+            self._cleanup_drone(drone)
+
+    def _cleanup_drone(self, drone: DroneState) -> None:
+        """Backend-specific cleanup for one removed drone (transmit thread).
+
+        Subclasses override this to release per-drone bookkeeping (counters,
+        rotation indices, external publish sessions). The default is a no-op.
+        """
         pass

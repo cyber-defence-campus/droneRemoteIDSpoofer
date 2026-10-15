@@ -133,6 +133,7 @@ class NanBridgeBackend(TransportBackend):
             
         next_tick = time.time()
         while not self._stop_event.is_set():
+            self._drain_removals()
             for drone, messages in self._active_packets():
                 # Initialize the drone on the Android bridge if not already done
                 if drone.mac_address not in self._configured_drones:
@@ -178,8 +179,8 @@ class NanBridgeBackend(TransportBackend):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-    def remove_drone(self, drone: DroneState) -> None:
-        """Stop publishing and remove state for an expired drone."""
+    def _cleanup_drone(self, drone: DroneState) -> None:
+        """Stop publishing and remove state for an expired drone (transmit thread)."""
         if drone.mac_address in self._configured_drones:
             stop_cmd = {
                 "type": "STOP",
@@ -431,6 +432,7 @@ class NanManualBackend(TransportBackend):
         loop_counter = 0
 
         while self._running:
+            self._drain_removals()
             now_us = int(time.time() * 1_000_000)
             current_epoch = now_us // TSF_EPOCH_US
             target_time_us = (current_epoch * TSF_EPOCH_US) + target_offsets_us[slot]
@@ -518,8 +520,8 @@ class NanManualBackend(TransportBackend):
                         c = self._msg_counters.get(s, 0)
                         self._msg_counters[s] = (c + 1) & 0xFF
 
-    def remove_drone(self, drone: DroneState) -> None:
-        """Remove state for expired drone in manual injection backend."""
+    def _cleanup_drone(self, drone: DroneState) -> None:
+        """Remove state for expired drone in manual injection backend (transmit thread)."""
         self._seq_nums.pop(drone.serial, None)
         self._msg_counters.pop(drone.serial, None)
 

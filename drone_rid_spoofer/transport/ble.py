@@ -362,15 +362,12 @@ class _BleBase(TransportBackend):
             self._sock = None
             logger.info("BLE backend: closed HCI socket")
 
-    def remove_drone(self, drone: DroneState) -> None:
-        """Remove state for an expired drone."""
+    def _cleanup_drone(self, drone: DroneState) -> None:
+        """Release per-drone bookkeeping for an expired drone (transmit thread)."""
         drone_key = drone.serial
-        if hasattr(self, '_counters'):
-            self._counters.pop(drone_key, None)
-        if hasattr(self, '_legacy_counters'):
-            self._legacy_counters.pop(drone_key, None)
-        if hasattr(self, '_extended_counters'):
-            self._extended_counters.pop(drone_key, None)
+        self._counters.pop(drone_key, None)
+        self._legacy_counters.pop(drone_key, None)
+        self._extended_counters.pop(drone_key, None)
         self._static_index.pop(drone_key, None)
         self._cycle_counts.pop(drone_key, None)
 
@@ -452,6 +449,8 @@ class BleLegacyBackend(_BleBase):
                 time.sleep(0.1)
                 continue
                 
+            self._drain_removals()
+
             active_packets = self._active_packets()
             if not active_packets:
                 time.sleep(0.1)
@@ -687,6 +686,8 @@ class BleExtendedBackend(_BleBase):
                 time.sleep(0.1)
                 continue
                 
+            self._drain_removals()
+
             active_packets = [
                 (d, m) for d, m in self._active_packets()
                 if getattr(d, 'transport', None) in (None, "ble", "both", "all")
