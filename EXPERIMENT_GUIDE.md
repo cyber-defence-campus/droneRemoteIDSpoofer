@@ -13,6 +13,7 @@ Test standard Remote ID broadcast compliance across all physical mediums using e
   * *Realistic local coordinates (e.g., Zurich):* `-l 47.376340 8.531256`
   * *Far away coordinates (e.g., Los Angeles / Middle of Atlantic):* `-l 34.0522 -118.2437` or `-l 0.0 0.0`
 * `-t` / `--transport`: Physical transport medium (`wifi`, `ble`, `nan`, `both`, `all`).
+* `--wifi-channel`: WiFi Channel for Wifi based transports, check social channels 6, 149 for both Wifi Beacon and WiFi-Nan and atleast one non-social channel on both bands.
 
 ### Commands:
 ```bash
@@ -76,7 +77,7 @@ This can be especially interesting if the receiver does not distinguish between 
 
 ---
 
-## 4. Airborne Drone Duplication (Figure-8 Takeover)
+## 4. OPTIONAL IF FLYING DRONE IS AVAILABLE: Airborne Drone Duplication (Figure-8 Takeover)
 Listen for an active real drone in the air, extract its verbatim static messages and MAC identity, and immediately broadcast an overlay virtual drone simulating a dynamic **Figure-8 trajectory** starting from the real drone's current coordinates.
 
 ### Commands:
@@ -96,7 +97,7 @@ sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t nan --nan
 
 ---
 
-## 5. Airborne Drone Duplication with Message Counter Modification
+## 5. OPTIONAL IF FLYING DRONE IS AVAILABLE: Airborne Drone Duplication with Message Counter Modification
 Execute the same Figure-8 duplication attack, but actively test data deduplication and session resilience on receivers by applying an exact **message counter offset** (`-o` / `--offset`) relative to the real drone's captured ASTM message count.
 
 ### Commands:
@@ -113,7 +114,7 @@ sudo .venv/bin/python3 attacks/takeover/takeover_figure8.py -i hci0 -t ble5 --of
 
 ---
 
-## 6. Airborne Drone Hiding (Real-Time Predictive Trajectory Overlay)
+## 6. OPTIONAL IF FLYING DRONE IS AVAILABLE: Airborne Drone Hiding (Real-Time Predictive Trajectory Overlay)
 Tracks a target drone in real-time, computes its instantaneous velocity vector and heading at every timestep, and extrapolates its anticipated positions into the future. It dynamically spawns multiple fake virtual drones (default: 7) orbiting around and ahead of the real drone's forecasted location to confuse tracking hardware and hide the true target.
 
 ### Commands:
@@ -133,7 +134,7 @@ sudo .venv/bin/python3 attacks/takeover/takeover_predictive.py -i hci0 -t nan --
 
 ---
 
-## 7. Wi-Fi Medium Suppression (CTS-to-Self Spamming)
+## 7. OPTIONAL IF FLYING DRONE IS AVAILABLE: Wi-Fi Medium Suppression (CTS-to-Self Spamming)
 Injects high-frequency IEEE 802.11 Clear-To-Send (CTS) control frames containing the maximum possible Network Allocation Vector (NAV) reservation duration (`32767 µs`). This silences surrounding Wi-Fi radios at the hardware carrier sense layer (CSMA/CA), suppressing competitor transmissions or blocking real Remote ID beacons from reaching ground stations.
 
 ### Step 1: Compile the C injection binary:
