@@ -197,6 +197,10 @@ class WifiBackend(TransportBackend):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
+        # Loop exited (self._running went false): this thread owns the socket,
+        # so it closes it here rather than letting close() touch it concurrently.
+        self._close_socket()
+
     def _cleanup_drone(self, drone: DroneState) -> None:
         """Remove drone sequence numbers when expired (transmit thread)."""
         self._seq_nums.pop(drone.serial, None)
@@ -204,10 +208,20 @@ class WifiBackend(TransportBackend):
 
     def close(self) -> None:
         self._running = False
-        if self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-        try:
-            self._sock.close()
-        except:
-            pass
+        if self._thread and self._thread.is_alive():
+            # The transmit thread owns the socket and closes it on exit, so the
+            # socket is never operated on from two threads at once.
+            self._thread.join(timeout=2.0)
+        else:
+            self._close_socket()
         logger.info("Wi-Fi backend closed")
+
+    def _close_socket(self) -> None:
+        """Close the raw socket. Runs on the transmit thread as it exits, or
+        from close() when the thread was never started."""
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+            self._sock = None

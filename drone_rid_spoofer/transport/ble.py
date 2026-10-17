@@ -348,17 +348,29 @@ class _BleBase(TransportBackend):
         raise NotImplementedError
 
     def close(self) -> None:
-        """Disable advertising and close HCI socket."""
+        """Stop the transmit thread and release the HCI socket.
+
+        Teardown (disable advertising + close socket) runs on the transmit
+        thread as it exits, so the HCI socket is never driven from two threads
+        at once. If the thread was never started, tear down here instead.
+        """
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
-            
+        else:
+            self._teardown_socket()
+
+    def _teardown_socket(self) -> None:
+        """Disable advertising and close the HCI socket (transmit thread)."""
         if self._sock:
             try:
                 self._disable_advertising()
             except OSError:
                 pass
-            self._sock.close()
+            try:
+                self._sock.close()
+            except Exception:
+                pass
             self._sock = None
             logger.info("BLE backend: closed HCI socket")
 
@@ -505,6 +517,8 @@ class BleLegacyBackend(_BleBase):
                 logger.warning(f"BLE4 Legacy deadline missed! Cycle took {elapsed*1000:.2f}ms (target: 1000ms)")
             else:
                 time.sleep(1.0 - elapsed)
+
+        self._teardown_socket()
 
 
 # ── BLE 5 Extended Advertising backend ─────────────────────────────────────────
@@ -818,3 +832,5 @@ class BleExtendedBackend(_BleBase):
                 logger.warning(f"BLE ({self.mode}) deadline missed! Cycle took {elapsed*1000:.2f}ms (target: 1000ms)")
             else:
                 time.sleep(1.0 - elapsed)
+
+        self._teardown_socket()

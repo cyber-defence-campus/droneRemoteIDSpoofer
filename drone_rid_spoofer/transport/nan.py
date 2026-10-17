@@ -520,22 +520,36 @@ class NanManualBackend(TransportBackend):
                         c = self._msg_counters.get(s, 0)
                         self._msg_counters[s] = (c + 1) & 0xFF
 
+        # Loop exited: this thread owns the socket, so it closes it here rather
+        # than letting close() touch it concurrently.
+        self._close_socket()
+
     def _cleanup_drone(self, drone: DroneState) -> None:
         """Remove state for expired drone in manual injection backend (transmit thread)."""
         self._seq_nums.pop(drone.serial, None)
         self._msg_counters.pop(drone.serial, None)
 
     def close(self) -> None:
-        """Close raw socket and stop transmission loop."""
+        """Stop the transmission loop and release the raw socket.
+
+        The socket is closed on the transmit thread as it exits so it is never
+        used from two threads at once; if the thread never started, close here.
+        """
         self._running = False
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-        if hasattr(self, "_sock") and self._sock:
+            self._thread.join(timeout=2.0)
+        else:
+            self._close_socket()
+        logger.info("NanManualBackend closed.")
+
+    def _close_socket(self) -> None:
+        """Close the raw socket (transmit thread on loop exit, or close())."""
+        if getattr(self, "_sock", None):
             try:
                 self._sock.close()
             except Exception:
                 pass
-        logger.info("NanManualBackend closed.")
+            self._sock = None
 
     def send_raw(self, drone_key: str, payload: bytes) -> None:
         """Send raw byte payload (stub for interfaces requiring raw transmission)."""
