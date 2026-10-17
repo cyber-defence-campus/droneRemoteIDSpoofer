@@ -35,7 +35,6 @@ class NanBridgeBackend(TransportBackend):
         self.protocol_version = protocol_version
         self.update_interval = update_interval
         self.sock = None
-        self.lock = threading.Lock()
         self._configured_drones = set()
         self._counters = {}
         self._stop_event = threading.Event()
@@ -87,43 +86,28 @@ class NanBridgeBackend(TransportBackend):
             self.sock = None
 
     def _send_command(self, cmd: dict):
-        """Send JSON command over TCP."""
-        with self.lock:
+        """Send a JSON command over TCP.
+
+        Only ever called on the transmit thread (the loop and `_cleanup_drone`,
+        which runs via `_drain_removals`), so the socket has a single writer and
+        needs no lock. The listener thread only reads, on its own fd reference.
+        """
+        if not self.sock:
+            # Attempt to reconnect
+            self._connect()
             if not self.sock:
-                # Attempt to reconnect
-                self._connect()
-                if not self.sock:
-                    return
+                return
 
+        try:
+            data = json.dumps(cmd) + "\n"
+            self.sock.sendall(data.encode('utf-8'))
+        except Exception as e:
+            logging.error(f"Error sending command to NAN bridge: {e}")
             try:
-                data = json.dumps(cmd) + "\n"
-                self.sock.sendall(data.encode('utf-8'))
-            except Exception as e:
-                logging.error(f"Error sending command to NAN bridge: {e}")
                 self.sock.close()
-                self.sock = None
-
-    def send_raw(self, drone_key: str, payload: bytes) -> None:
-        """Send a raw byte payload via NAN."""
-        if drone_key not in self._configured_drones:
-            config_cmd = {
-                "type": "CONFIG",
-                "drone_id": drone_key
-            }
-            self._send_command(config_cmd)
-            self._configured_drones.add(drone_key)
-
-        if len(payload) > 255:
-            logging.warning(f"NAN Raw Payload too large ({len(payload)} bytes). Truncating to 255.")
-            payload = payload[:255]
-
-        payload_b64 = base64.b64encode(payload).decode('ascii')
-        payload_cmd = {
-            "type": "PAYLOAD",
-            "drone_id": drone_key,
-            "payload": payload_b64
-        }
-        self._send_command(payload_cmd)
+            except Exception:
+                pass
+            self.sock = None
 
     def _transmit_loop(self) -> None:
         import time
@@ -145,12 +129,9 @@ class NanBridgeBackend(TransportBackend):
                     self._configured_drones.add(drone.mac_address)
 
                 drone_key = drone.mac_address
-                
-                if hasattr(drone, 'counter_override') and drone.counter_override is not None:
-                    counter = drone.counter_override
-                else:
-                    counter = self._counters.get(drone_key, 0)
-                    self._counters[drone_key] = (counter + 1) & 0xFF
+
+                counter = self._counters.get(drone_key, 0)
+                self._counters[drone_key] = (counter + 1) & 0xFF
                 
                 pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
                 pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
@@ -179,6 +160,10 @@ class NanBridgeBackend(TransportBackend):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
+        # Loop exited: this thread owns the socket, so it tears it down here
+        # rather than letting close() touch it from another thread.
+        self._teardown()
+
     def _cleanup_drone(self, drone: DroneState) -> None:
         """Stop publishing and remove state for an expired drone (transmit thread)."""
         if drone.mac_address in self._configured_drones:
@@ -190,43 +175,40 @@ class NanBridgeBackend(TransportBackend):
             self._configured_drones.discard(drone.mac_address)
         self._counters.pop(drone.mac_address, None)
 
-    def close(self) -> None:
-        """Close the connection to the Android bridge."""
-        self._stop_event.set()
+    def _teardown(self) -> None:
+        """Tell the bridge to stop all publishing and close the socket.
+
+        Runs on the transmit thread as the loop exits, so the socket has a
+        single owner. Only called from close() directly when the transmit
+        thread was never started.
+        """
         if self.sock:
-            with self.lock:
-                # Tell Android to stop all publishing
-                try:
-                    cmd = {"type": "STOP_ALL"}
-                    data = json.dumps(cmd) + "\n"
-                    self.sock.sendall(data.encode('utf-8'))
-                except Exception:
-                    pass
-                self._configured_drones.clear()
-                
-                try:
-                    self.sock.close()
-                except Exception:
-                    pass
-                self.sock = None
+            try:
+                self.sock.sendall((json.dumps({"type": "STOP_ALL"}) + "\n").encode("utf-8"))
+            except Exception:
+                pass
+            self._configured_drones.clear()
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
             logging.info("Disconnected from NAN bridge.")
+
+    def close(self) -> None:
+        """Stop the transmit/listener threads and release the bridge socket.
+
+        The transmit thread tears the socket down as it exits (single owner);
+        close() only signals and joins. If the transmit thread was never
+        started, tear down here instead.
+        """
+        self._stop_event.set()
+        if self._transmit_thread and self._transmit_thread.is_alive():
+            self._transmit_thread.join(timeout=2.0)
+        else:
+            self._teardown()
         if self._listener_thread:
             self._listener_thread.join(timeout=2.0)
-        if self._transmit_thread:
-            self._transmit_thread.join(timeout=2.0)
-
-    def reset(self) -> None:
-        """Perform a full system reset of the Android NAN subsystem."""
-        if self.sock:
-            with self.lock:
-                try:
-                    cmd = {"type": "RESET"}
-                    data = json.dumps(cmd) + "\n"
-                    self.sock.sendall(data.encode('utf-8'))
-                except Exception as e:
-                    logging.error(f"Failed to send RESET command: {e}")
-                self._configured_drones.clear()
-            logging.info("Sent RESET command to NAN bridge.")
 
 
 # Maintain backward compatibility alias for scripts relying on NanBackend
@@ -461,8 +443,6 @@ class NanManualBackend(TransportBackend):
 
                 seq_num = self._seq_nums.get(serial, 0)
                 counter = self._msg_counters.get(serial, 0)
-                if hasattr(drone, "counter_override") and drone.counter_override is not None:
-                    counter = drone.counter_override
 
                 # Slot 0 represents the active Discovery Window (DW)
                 if slot == 0:
@@ -550,15 +530,5 @@ class NanManualBackend(TransportBackend):
             except Exception:
                 pass
             self._sock = None
-
-    def send_raw(self, drone_key: str, payload: bytes) -> None:
-        """Send raw byte payload (stub for interfaces requiring raw transmission)."""
-        logger.warning("send_raw not directly implemented for NanManualBackend; use standard drone state metronome.")
-
-    def reset(self) -> None:
-        """Reset internal sequence and ODID counters."""
-        self._seq_nums.clear()
-        self._msg_counters.clear()
-        logger.info("NanManualBackend reset completed.")
 
 

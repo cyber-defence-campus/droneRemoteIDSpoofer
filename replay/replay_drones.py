@@ -3,6 +3,7 @@ import argparse
 import base64
 import json
 import logging
+import socket
 import struct
 import sys
 import os
@@ -16,7 +17,6 @@ from scapy.all import sendp
 import scapy.layers.dot11 as dot11
 
 from drone_rid_spoofer.transport.ble import _BleBase
-from drone_rid_spoofer.transport.nan import NanBackend
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
 
@@ -154,6 +154,71 @@ def send_wifi(interface: str, mac: str, counter: int, messages: list,
     sendp(frame, iface=interface, verbose=False)
 
 
+class SingleShotNan:
+    """Replay-side NAN injector.
+
+    Pushes individual payloads to the Android bridge over TCP, speaking the
+    same command protocol as the live NanBridgeBackend. Kept here alongside
+    SingleShotBleLegacy/Extended so replay owns its one-shot injection instead
+    of reaching into the production backend (which no longer exposes send_raw).
+
+    NOTE: this is bridge-only — Android's Wi-Fi Aware stack provides all NAN
+    synchronization (cluster/sync/discovery beacons, DW scheduling, SDF).
+    TODO: no replay path for the manual backend (NanManualBackend) yet, i.e.
+    raw L2 re-injection of the sync/discovery beacons + SDFs we build ourselves.
+    Would mirror the BLE single-shots: a SingleShotNanManual(NanManualBackend)
+    exposing send_one/send_pack over _build_nan_beacon / _build_nan_sdf.
+    """
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 8080):
+        self._configured = set()
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.settimeout(5.0)
+        self.sock.connect((host, port))
+        logging.info(f"SingleShotNan connected to bridge at {host}:{port}")
+
+    def _send(self, cmd: dict) -> None:
+        self.sock.sendall((json.dumps(cmd) + "\n").encode("utf-8"))
+
+    def _ensure_config(self, drone_id: str) -> None:
+        if drone_id not in self._configured:
+            self._send({"type": "CONFIG", "drone_id": drone_id})
+            self._configured.add(drone_id)
+
+    def _send_payload(self, drone_id: str, payload: bytes) -> None:
+        if len(payload) > 255:
+            logging.warning(f"NAN payload too large ({len(payload)} bytes); truncating to 255.")
+            payload = payload[:255]
+        self._send({
+            "type": "PAYLOAD",
+            "drone_id": drone_id,
+            "payload": base64.b64encode(payload).decode("ascii"),
+        })
+
+    def send_raw(self, drone_id: str, payload: bytes) -> None:
+        """Inject a captured raw ODID payload verbatim."""
+        self._ensure_config(drone_id)
+        self._send_payload(drone_id, payload)
+
+    def send_pack(self, drone_id: str, counter: int, messages: list,
+                  protocol_version: int = 2) -> None:
+        """Inject a message list wrapped in an ODID message-pack header."""
+        self._ensure_config(drone_id)
+        pack_type_ver = ((0xF << 4) | protocol_version) & 0xFF  # 0xF = Pack
+        pack_header = bytes([counter & 0xFF, pack_type_ver, 0x19, len(messages) & 0xFF])
+        self._send_payload(drone_id, pack_header + b"".join(messages))
+
+    def close(self) -> None:
+        try:
+            self._send({"type": "STOP_ALL"})
+        except Exception:
+            pass
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Replay extracted ASTM payloads.")
     parser.add_argument("jsonl_file", help="Input JSONL replay file")
@@ -227,7 +292,7 @@ def main():
                 raw_bytes = base64.b64decode(event["raw_payload_b64"])
                 if t == "nan":
                     if not nan_backend:
-                        nan_backend = NanBackend()
+                        nan_backend = SingleShotNan()
                     session_id = event.get("session_id", mac) if mac else "00:11:22:33:44:55"
                     nan_backend.send_raw(session_id, raw_bytes)
                 continue
@@ -259,12 +324,9 @@ def main():
                 ble_extended.send_bt5_pack(mac, counter, messages)
             elif t == "nan":
                 if not nan_backend:
-                    nan_backend = NanBackend()
-                # Dummy DroneState
-                class DummyState:
-                    mac_address = event.get("session_id", mac) if mac else "00:11:22:33:44:55"
-                    counter_override = counter
-                nan_backend.send_messages(DummyState(), messages)
+                    nan_backend = SingleShotNan()
+                session_id = event.get("session_id", mac) if mac else "00:11:22:33:44:55"
+                nan_backend.send_pack(session_id, counter, messages)
                 
             if idx % 10 == 0:
                 logging.info(f"Replayed {idx}/{len(events)} events...")
