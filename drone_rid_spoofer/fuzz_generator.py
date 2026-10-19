@@ -63,12 +63,13 @@ class FuzzCategory:
     AUTH_PAGINATION = "auth_pages"
     STRING_INJECTION = "string_inject"
     KINEMATICS = "kinematics"
+    TIMESTAMP = "timestamp"
     PROTOCOL_VERSION = "protocol"
     ALL = "all"
 
     @classmethod
     def all_choices(cls) -> list:
-        return [cls.PACK_HEADER, cls.NESTED_PACKS, cls.AUTH_PAGINATION, cls.STRING_INJECTION, cls.KINEMATICS, cls.PROTOCOL_VERSION, cls.ALL]
+        return [cls.PACK_HEADER, cls.NESTED_PACKS, cls.AUTH_PAGINATION, cls.STRING_INJECTION, cls.KINEMATICS, cls.TIMESTAMP, cls.PROTOCOL_VERSION, cls.ALL]
 
 
 class RidFuzzer:
@@ -108,6 +109,43 @@ class RidFuzzer:
             {"lat": -0x80000000, "lng": -0x80000000, "dir": 359, "alt": 0xFFFF},
         ]
 
+        # Timestamp edge cases exercising all three ASTM timestamp fields simultaneously:
+        #   loc_ts  - Location (Type 0x1) tenth-seconds-since-top-of-hour (uint16, valid 0-36000, 0xFFFF=unknown)
+        #   unix_ts - Auth Page 0 (Type 0x2) & System (Type 0x4) seconds since 2019-01-01 epoch (uint32)
+        self.timestamp_edge_cases = [
+            {"loc_ts": 0x0000, "unix_ts": 0x00000000, "label": "Epoch zero / top-of-hour zero"},
+            {"loc_ts": 0xFFFF, "unix_ts": 0xFFFFFFFF, "label": "All-ones unknown marker / uint rollover"},
+            {"loc_ts": 36001, "unix_ts": 0x80000000, "label": "Over-range tenth-seconds / signed INT32 overflow boundary"},
+            {"loc_ts": 60000, "unix_ts": 0x7FFFFFFF, "label": "Far over-range tenth-seconds / INT32_MAX"},
+            {"loc_ts": 0x0001, "unix_ts": 4102444800, "label": "Minimal tenth-seconds / far-future (year 2100)"},
+        ]
+
+    @staticmethod
+    def _build_location_fuzzed_ts(drone: DroneState, tenth_seconds: int) -> bytes:
+        """Build a valid Location (Type 0x1) message with the timestamp field overridden.
+
+        Splices the raw tenth-seconds value into offset 21 (uint16) of an otherwise
+        well-formed location vector, so only the timestamp is anomalous.
+        """
+        loc = bytearray(build_location_vector(
+            drone.lat, drone.lng, drone.direction,
+            speed=drone.speed, vertical_speed=drone.vertical_speed,
+            geodetic_altitude=drone.geodetic_altitude, height=drone.height,
+        ))
+        struct.pack_into("<H", loc, 21, tenth_seconds & 0xFFFF)
+        return bytes(loc)
+
+    @staticmethod
+    def _build_system_fuzzed_ts(drone: DroneState, unix_ts: int) -> bytes:
+        """Build a valid System (Type 0x4) message with the timestamp field overridden.
+
+        Splices the raw 4-byte Unix-epoch (2019-01-01) timestamp into offset 20 of an
+        otherwise well-formed system message.
+        """
+        sysm = bytearray(build_system(drone.pilot_location[0], drone.pilot_location[1]))
+        struct.pack_into("<I", sysm, 20, unix_ts & 0xFFFFFFFF)
+        return bytes(sysm)
+
     def get_next_fuzz_payload(self, drone: DroneState) -> Tuple[List[bytes], Dict[str, Any], str]:
         """Generate fuzzed message payload list, backend fuzz config, and attack description.
         
@@ -124,6 +162,7 @@ class RidFuzzer:
                 FuzzCategory.AUTH_PAGINATION,
                 FuzzCategory.STRING_INJECTION,
                 FuzzCategory.KINEMATICS,
+                FuzzCategory.TIMESTAMP,
                 FuzzCategory.PROTOCOL_VERSION,
             ]
             active_cat = categories[self._iteration % len(categories)]
@@ -234,6 +273,21 @@ class RidFuzzer:
                 build_system(edge["lat"], edge["lng"]),
             ]
             desc = f"Kinematic Edge-Cases -> Lat: {edge['lat']}, Lng: {edge['lng']}, Dir: {edge['dir']}, Alt: {edge['alt']}"
+            return msgs, {}, desc
+
+        elif active_cat == FuzzCategory.TIMESTAMP:
+            edge = self.timestamp_edge_cases[self._iteration % len(self.timestamp_edge_cases)]
+
+            # Fuzz the timestamp fields that receivers actually parse and display:
+            # Location tenth-seconds and System epoch. (Auth timestamps are typically
+            # ignored by receivers, so they're left out.)
+            msgs = [
+                build_basic_id(drone.serial),
+                self._build_location_fuzzed_ts(drone, edge["loc_ts"]),
+                self._build_system_fuzzed_ts(drone, edge["unix_ts"]),
+            ]
+            desc = (f"Timestamp Fuzzing -> {edge['label']} "
+                    f"(loc tenth-sec=0x{edge['loc_ts'] & 0xFFFF:04X}, epoch=0x{edge['unix_ts'] & 0xFFFFFFFF:08X})")
             return msgs, {}, desc
 
         elif active_cat == FuzzCategory.PROTOCOL_VERSION:
