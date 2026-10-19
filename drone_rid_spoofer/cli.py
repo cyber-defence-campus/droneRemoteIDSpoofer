@@ -120,6 +120,10 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
     """
     backends: List[TransportBackend] = []
 
+    # Construction is pure (no I/O): backends acquire sockets/radios lazily in
+    # open(), which start() calls. So a constructor cannot leak a resource, and
+    # any open() failure at start() time is cleaned up by the caller's close()
+    # of every backend in this list (see cli.main's finally).
     if transport in ("wifi", "both", "all"):
         from drone_rid_spoofer.transport.wifi import WifiBackend
         backends.append(WifiBackend(interface, ess=wifi_ess, channel=wifi_channel, beacon_interval=wifi_beacon_interval))

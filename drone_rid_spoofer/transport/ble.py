@@ -121,8 +121,21 @@ class _BleBase(TransportBackend):
         self._packet_builder: Optional[PacketBuilder] = None
         self._running = False
         self._thread = None
+
+    def _acquire(self) -> None:
+        """Open the HCI socket and configure advertising sets (transmit side)."""
         self._open_socket()
-        self._init_advertising()
+        try:
+            self._init_advertising()
+        except Exception:
+            # Don't leak the HCI socket we just opened if advertising setup fails.
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
+            raise
 
     def _open_socket(self) -> None:
         """Open raw HCI socket and ensure the adapter is up."""
@@ -145,6 +158,12 @@ class _BleBase(TransportBackend):
             )
             self._sock.bind((self.adapter_id,))
         except (OSError, PermissionError) as e:
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
             raise RuntimeError(
                 f"Failed to open HCI socket on {self.adapter}. "
                 f"Requires root and Linux with Bluetooth adapter. Error: {e}"
@@ -164,6 +183,7 @@ class _BleBase(TransportBackend):
 
     def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
               gen_lock: Optional[GenerationLock] = None) -> None:
+        self.open()
         self._bind(drones, packet_builder, gen_lock)
         self._running = True
         self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
@@ -355,6 +375,7 @@ class _BleBase(TransportBackend):
         at once. If the thread was never started, tear down here instead.
         """
         self._running = False
+        self._opened = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         else:
@@ -566,6 +587,10 @@ class BleExtendedBackend(_BleBase):
 
     def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
               gen_lock: Optional[GenerationLock] = None) -> None:
+        # Acquire the socket and run the mode-based advertising init while
+        # _drones is still empty, matching the pre-refactor construction order;
+        # the per-drone mismatch re-init below then runs with drones populated.
+        self.open()
         self._drones = drones
         has_ext_legacy = any(getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones)
         has_extended = any(getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones)

@@ -22,10 +22,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(m
 
 class SingleShotBleLegacy(_BleBase):
     _ADV_ENABLE_OPCODES = (0x200A,)
-    
+
     def __init__(self, adapter="hci0"):
         super().__init__(adapter, 200, 2)
-        
+        self.open()  # one-shot helper: acquire the HCI socket immediately
+
     def send_messages(self, drone, messages):
         pass
         
@@ -59,10 +60,11 @@ class SingleShotBleLegacy(_BleBase):
 
 class SingleShotBleExtended(_BleBase):
     _ADV_ENABLE_OPCODES = (0x2039,)
-    
+
     def __init__(self, adapter="hci0"):
         super().__init__(adapter, 200, 2)
-        
+        self.open()  # one-shot helper: acquire the HCI socket immediately
+
     def send_messages(self, drone, messages):
         pass
         

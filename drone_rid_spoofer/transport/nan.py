@@ -42,10 +42,13 @@ class NanBridgeBackend(TransportBackend):
         self._drones = []
         self._packet_builder: Optional[PacketBuilder] = None
         self._transmit_thread = None
+
+    def _acquire(self) -> None:
         self._connect()
 
     def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
               gen_lock: Optional[GenerationLock] = None) -> None:
+        self.open()
         self._bind(drones, packet_builder, gen_lock)
         self._transmit_thread = threading.Thread(target=self._transmit_loop, daemon=True)
         self._transmit_thread.start()
@@ -83,6 +86,11 @@ class NanBridgeBackend(TransportBackend):
             self._listener_thread.start()
         except Exception as e:
             logging.error(f"Failed to connect to NAN bridge at {self.host}:{self.port}: {e}")
+            if self.sock is not None:
+                try:
+                    self.sock.close()
+                except OSError:
+                    pass
             self.sock = None
 
     def _send_command(self, cmd: dict):
@@ -203,6 +211,7 @@ class NanBridgeBackend(TransportBackend):
         started, tear down here instead.
         """
         self._stop_event.set()
+        self._opened = False
         if self._transmit_thread and self._transmit_thread.is_alive():
             self._transmit_thread.join(timeout=2.0)
         else:
@@ -253,18 +262,7 @@ class NanManualBackend(TransportBackend):
 
         self.service_id_hash = hashlib.sha256(self.NAN_SERVICE_NAME).digest()[:6]
 
-        # Put the interface into monitor mode on the target channel (the process
-        # already runs as root for raw injection, so no external helper is needed).
-        if not setup_monitor_mode(self.interface, self.channel):
-            raise RuntimeError(f"Could not put {self.interface} into monitor mode on channel {self.channel}")
-
-        try:
-            self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-            self._sock.bind((self.interface, 0))
-            logger.info(f"Raw AF_PACKET socket created on {self.interface} for NAN manual injection")
-        except Exception as e:
-            logger.error(f"Failed to create raw socket on {self.interface}. Needs sudo? {e}")
-            raise
+        self._sock = None
 
         # Precompute Radiotap header
         try:
@@ -285,8 +283,29 @@ class NanManualBackend(TransportBackend):
             f"NanManualBackend initialized on {self.interface} | Cluster: {self.cluster_id_str} | Instance ID: 0x{self.instance_id:02X}"
         )
 
+    def _acquire(self) -> None:
+        # Put the interface into monitor mode on the target channel (the process
+        # already runs as root for raw injection, so no external helper is needed).
+        if not setup_monitor_mode(self.interface, self.channel):
+            raise RuntimeError(f"Could not put {self.interface} into monitor mode on channel {self.channel}")
+
+        try:
+            self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+            self._sock.bind((self.interface, 0))
+            logger.info(f"Raw AF_PACKET socket created on {self.interface} for NAN manual injection")
+        except Exception as e:
+            logger.error(f"Failed to create raw socket on {self.interface}. Needs sudo? {e}")
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
+            raise
+
     def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
               gen_lock: Optional[GenerationLock] = None) -> None:
+        self.open()
         self._bind(drones, packet_builder, gen_lock)
         self._running = True
         self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
@@ -511,6 +530,7 @@ class NanManualBackend(TransportBackend):
         used from two threads at once; if the thread never started, close here.
         """
         self._running = False
+        self._opened = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         else:

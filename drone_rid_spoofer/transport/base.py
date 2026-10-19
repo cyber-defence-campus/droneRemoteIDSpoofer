@@ -30,6 +30,33 @@ class TransportBackend(ABC):
         # dict mutated by exactly one thread (deque append/popleft are atomic in
         # CPython), instead of the controller and transmit threads racing on it.
         self._pending_removals: "Deque[DroneState]" = deque()
+        # Whether open() has acquired this backend's OS resources. Construction
+        # itself is pure (no I/O), so a fresh backend is un-opened.
+        self._opened: bool = False
+
+    def open(self) -> None:
+        """Acquire transport resources (sockets, radios, adapters). Idempotent.
+
+        Kept separate from __init__ so construction is pure and side-effect
+        free: a constructed-but-unopened backend holds no OS resources, which
+        makes it testable without hardware and makes partial-construction leaks
+        impossible (nothing to clean up if __init__ cannot do I/O). ``start()``
+        calls this automatically; callers that drive a backend without
+        ``start()`` (e.g. one-shot injectors, benchmark harnesses that patch
+        the transmit loop) must call it themselves.
+        """
+        if self._opened:
+            return
+        self._acquire()
+        self._opened = True
+
+    def _acquire(self) -> None:
+        """Backend-specific resource acquisition, run once by :meth:`open`.
+
+        Must be all-or-nothing: on failure it releases anything it acquired and
+        raises, leaving the backend un-opened. Default is a no-op.
+        """
+        pass
 
     @abstractmethod
     def start(self, drones: List[DroneState], packet_builder: PacketBuilder,

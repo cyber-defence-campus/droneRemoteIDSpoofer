@@ -35,20 +35,8 @@ class WifiBackend(TransportBackend):
         self.channel = channel
         self.beacon_interval = beacon_interval
         self.rate_mbps = rate_mbps
-        
-        # Put the interface into monitor mode on the target channel (the process
-        # already runs as root for raw injection, so no external helper is needed).
-        if not setup_monitor_mode(self.interface, self.channel):
-            raise RuntimeError(f"Could not put {self.interface} into monitor mode on channel {self.channel}")
+        self._sock = None
 
-        try:
-            self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-            self._sock.bind((self.interface, 0))
-            logger.info(f"Raw AF_PACKET socket created on {self.interface}")
-        except Exception as e:
-            logger.error(f"Failed to create raw socket on {self.interface}. Needs sudo? {e}")
-            raise
-        
         # Message pack header: msg_type (0xF = Pack) + ver, msg_size (0x19 = 25 bytes)
         self.pack_header_prefix = bytes([(MsgType.PACK << 4) | self.protocol_version, 0x19])
         
@@ -66,8 +54,29 @@ class WifiBackend(TransportBackend):
         self.missed_deadlines = 0
         logger.info(f"Wi-Fi backend initialized on {interface} with {self.beacon_interval*1000:.0f}ms beacon interval")
 
+    def _acquire(self) -> None:
+        # Put the interface into monitor mode on the target channel (the process
+        # already runs as root for raw injection, so no external helper is needed).
+        if not setup_monitor_mode(self.interface, self.channel):
+            raise RuntimeError(f"Could not put {self.interface} into monitor mode on channel {self.channel}")
+
+        try:
+            self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+            self._sock.bind((self.interface, 0))
+            logger.info(f"Raw AF_PACKET socket created on {self.interface}")
+        except Exception as e:
+            logger.error(f"Failed to create raw socket on {self.interface}. Needs sudo? {e}")
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
+            raise
+
     def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
               gen_lock: Optional[GenerationLock] = None) -> None:
+        self.open()
         self._bind(drones, packet_builder, gen_lock)
         self._running = True
         self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
@@ -206,6 +215,7 @@ class WifiBackend(TransportBackend):
 
     def close(self) -> None:
         self._running = False
+        self._opened = False
         if self._thread and self._thread.is_alive():
             # The transmit thread owns the socket and closes it on exit, so the
             # socket is never operated on from two threads at once.
