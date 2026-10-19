@@ -44,10 +44,9 @@ pip install -e .          # add [dev] for pytest/build tooling
 
 ### Run your first spoof - Single drone
 
-**Wi-Fi** — put your adapter in monitor mode, then:
+**Wi-Fi** — just point the spoofer at your adapter; it configures monitor mode
+(on the target channel) itself and restores managed mode on exit:
 ```bash
-sudo chmod +x ./interface-monitor.sh
-sudo ./interface-monitor.sh <interface-name>
 sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
 ```
 
@@ -62,18 +61,6 @@ sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
 >   ```
 > - **Do NOT set an arbitrary or foreign regulatory domain** simply to circumvent local frequency restrictions, radar detection (DFS) rules, or transmission bans on specific channels (such as 5.8 GHz channels 149–165). Transmitting on unauthorized frequencies or exceeding local power limits violates national radio laws.
 > - You can verify your active channel permissions, DFS requirements, and power limits at any time using `iw reg get`.
-
-> **Tip — tab-completion & interactive picker**
->
-> Run without arguments to get an interactive interface picker with state/driver/MAC info:
-> ```bash
-> sudo ./interface-monitor.sh
-> ```
-> To enable persistent **tab-completion** for interface names and Wi-Fi channels across reboots and new shell sessions, install it once:
-> ```bash
-> ./interface-monitor.sh --install-completion
-> ```
-> Automatically loads in new terminals for `./interface-monitor.sh`, `interface-monitor.sh`, and `sudo ./interface-monitor.sh`.
 
 **BLE** — make sure your adapter is up:
 ```bash

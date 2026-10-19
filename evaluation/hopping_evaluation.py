@@ -2236,7 +2236,7 @@ Examples:
             setup_monitor_mode(args.interface, args.social_2g)
         elif not check_monitor_mode(args.interface):
             logger.warning(f"Interface {args.interface} does not appear to be in monitor mode!")
-            logger.warning("Consider running with --setup-monitor or running ./interface-monitor.sh first.")
+            logger.warning("Consider running with --setup-monitor first.")
 
         if args.tx_interface and args.setup_tx_monitor:
             setup_monitor_mode(args.tx_interface, args.social_2g)

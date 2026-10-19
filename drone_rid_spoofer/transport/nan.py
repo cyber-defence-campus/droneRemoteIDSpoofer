@@ -6,7 +6,6 @@ import json
 import logging
 import random
 import socket
-import subprocess
 import threading
 import time
 from typing import List, Dict, Optional
@@ -17,6 +16,7 @@ from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
 from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
+from drone_rid_spoofer.transport.wifi_interface import setup_monitor_mode, restore_managed_mode
 
 logger = logging.getLogger(__name__)
 
@@ -253,15 +253,10 @@ class NanManualBackend(TransportBackend):
 
         self.service_id_hash = hashlib.sha256(self.NAN_SERVICE_NAME).digest()[:6]
 
-        # Lock the physical interface to the target Wi-Fi channel
-        try:
-            subprocess.run(
-                ["sudo", "iw", "dev", self.interface, "set", "channel", str(self.channel)],
-                check=True
-            )
-            logger.info(f"NAN Manual: Wi-Fi interface {self.interface} locked to channel {self.channel}")
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Could not lock channel on {self.interface}: {e}")
+        # Put the interface into monitor mode on the target channel (the process
+        # already runs as root for raw injection, so no external helper is needed).
+        if not setup_monitor_mode(self.interface, self.channel):
+            raise RuntimeError(f"Could not put {self.interface} into monitor mode on channel {self.channel}")
 
         try:
             self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
@@ -520,6 +515,7 @@ class NanManualBackend(TransportBackend):
             self._thread.join(timeout=2.0)
         else:
             self._close_socket()
+        restore_managed_mode(self.interface)
         logger.info("NanManualBackend closed.")
 
     def _close_socket(self) -> None:

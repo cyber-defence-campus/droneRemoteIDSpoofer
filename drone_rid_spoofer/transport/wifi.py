@@ -1,6 +1,5 @@
 import logging
 import socket
-import subprocess
 import threading
 import time
 from typing import List, Dict, Optional, Tuple
@@ -12,6 +11,7 @@ from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
 from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
+from drone_rid_spoofer.transport.wifi_interface import setup_monitor_mode, restore_managed_mode
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +36,11 @@ class WifiBackend(TransportBackend):
         self.beacon_interval = beacon_interval
         self.rate_mbps = rate_mbps
         
-        # Lock the physical interface to the target channel to ensure compliance
-        try:
-            subprocess.run(["sudo", "iw", "dev", self.interface, "set", "channel", str(self.channel)], check=True)
-            logger.info(f"Wi-Fi interface {self.interface} locked to channel {self.channel}")
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Could not lock channel on {self.interface}: {e}")
-            
+        # Put the interface into monitor mode on the target channel (the process
+        # already runs as root for raw injection, so no external helper is needed).
+        if not setup_monitor_mode(self.interface, self.channel):
+            raise RuntimeError(f"Could not put {self.interface} into monitor mode on channel {self.channel}")
+
         try:
             self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
             self._sock.bind((self.interface, 0))
@@ -214,6 +212,7 @@ class WifiBackend(TransportBackend):
             self._thread.join(timeout=2.0)
         else:
             self._close_socket()
+        restore_managed_mode(self.interface)
         logger.info("Wi-Fi backend closed")
 
     def _close_socket(self) -> None:

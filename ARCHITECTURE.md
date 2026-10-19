@@ -16,7 +16,6 @@ The codebase is structured as a Python package (`drone_rid_spoofer/`) with entry
 
 ```
 spoof_drones.py                         # Main entry-point CLI shim
-interface-monitor.sh                    # Helper script for putting Wi-Fi interfaces into monitor mode
 scenario.json                           # Active local scenario configuration
 
 drone_rid_spoofer/                      # Core Python library
@@ -35,6 +34,7 @@ drone_rid_spoofer/                      # Core Python library
 └── transport/
     ├── __init__.py
     ├── base.py                         # TransportBackend abstract base class
+    ├── wifi_interface.py               # Monitor-mode setup/restore for injection interfaces
     ├── wifi.py                         # WifiBackend (raw AF_PACKET 802.11 beacon injection)
     ├── ble.py                          # BleLegacyBackend & BleExtendedBackend (raw Linux HCI sockets)
     └── nan.py                          # NanBridgeBackend (Android TCP) & NanManualBackend (raw 802.11 NAN)
