@@ -27,7 +27,8 @@ import struct
 import subprocess
 import time
 import threading
-from typing import Dict, List, Optional
+from collections import deque
+from typing import Deque, Dict, List, Optional
 
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.messages import MsgType
@@ -87,6 +88,19 @@ def _build_hci_command(opcode: int, data: bytes) -> bytes:
     return struct.pack('<BHB', 0x01, opcode, len(data)) + data
 
 
+# Upper bound on buffered HCI events. Only LE Advertising Set Terminated events
+# are ever read back from the buffer, and at most a couple are pending at once,
+# so this is a generous safety cap that keeps the buffer from ever growing
+# without limit if a terminated event is produced but never awaited.
+_EVENT_BUFFER_MAX = 64
+
+
+def _is_adv_terminated(pkt: bytes) -> bool:
+    """True if pkt is an LE Advertising Set Terminated event (HCI LE Meta 0x3E,
+    subevent 0x12), for any advertising handle."""
+    return len(pkt) >= 6 and pkt[0] == HCI_EVENT_PKT and pkt[1] == 0x3E and pkt[3] == 0x12
+
+
 # ── Shared base class ─────────────────────────────────────────────────────────
 
 class _BleBase(TransportBackend):
@@ -113,7 +127,10 @@ class _BleBase(TransportBackend):
         self._sock: Optional[socket.socket] = None
         self._static_index: Dict[bytes, int] = {}  # per-drone static-msg rotation pointer
         self._cycle_counts: Dict[bytes, int] = {}  # per-drone cycle counter for staggering
-        self._event_buffer: List[bytes] = []  # Buffer for unhandled HCI events
+        # Bounded buffer holding only pending LE Advertising Set Terminated
+        # events (the only kind ever read back). Capped so it cannot grow
+        # without limit; non-terminated events are dropped rather than stored.
+        self._event_buffer: Deque[bytes] = deque(maxlen=_EVENT_BUFFER_MAX)
         self._counters: Dict[str, int] = {}  # general counter fallback
         self._legacy_counters: Dict[str, int] = {}  # per-drone message sequence counter (legacy)
         self._extended_counters: Dict[str, int] = {}  # per-drone message sequence counter (extended)
@@ -231,10 +248,14 @@ class _BleBase(TransportBackend):
                 status = pkt[3]
                 evt_opcode = struct.unpack("<H", pkt[5:7])[0]
             else:
-                self._event_buffer.append(pkt)
-                continue  # unrelated event, keep draining
+                # Meta/other event: keep only if it's a terminated event some
+                # later _wait_for_adv_terminated will consume; drop otherwise.
+                if _is_adv_terminated(pkt):
+                    self._event_buffer.append(pkt)
+                continue  # keep draining for our Command Complete/Status
             if evt_opcode != opcode:
-                self._event_buffer.append(pkt)
+                # Command Complete/Status for a different opcode — never read
+                # back by anyone, so drop it instead of leaking it.
                 continue
             if status != 0:
                 # 0x0C "Command Disallowed" on advertising enable/disable just
@@ -254,14 +275,12 @@ class _BleBase(TransportBackend):
         deadline = time.monotonic() + timeout
 
         def is_terminated_event(p: bytes) -> bool:
-            if len(p) >= 6 and p[0] == HCI_EVENT_PKT and p[1] == 0x3E and p[3] == 0x12:
-                return p[5] == handle
-            return False
+            return _is_adv_terminated(p) and p[5] == handle
 
         # 1. Check if the event is already in the buffer
         for i, p in enumerate(self._event_buffer):
             if is_terminated_event(p):
-                self._event_buffer.pop(i)
+                del self._event_buffer[i]
                 return True
 
         # 2. Read from socket if not found
@@ -276,32 +295,38 @@ class _BleBase(TransportBackend):
                 pkt = self._sock.recv(258)
             except OSError:
                 return False
-            
+
             if is_terminated_event(pkt):
                 return True
-            else:
+            elif _is_adv_terminated(pkt):
+                # Terminated event for a different handle — keep for its waiter.
                 self._event_buffer.append(pkt)
+            # else: unrelated event — drop it.
 
     def _flush_adv_terminated_events(self, handle: int) -> None:
-        """Clear any stale LE Advertising Set Terminated events for the given handle from the buffer."""
+        """Clear any stale LE Advertising Set Terminated events for the given handle."""
         def is_terminated_event(p: bytes) -> bool:
-            if len(p) >= 6 and p[0] == HCI_EVENT_PKT and p[1] == 0x3E and p[3] == 0x12:
-                return p[5] == handle
-            return False
-            
-        # Drain the socket completely so all pending events are in the buffer
+            return _is_adv_terminated(p) and p[5] == handle
+
+        # Drain the socket; keep only terminated events for *other* handles
+        # (their waiters still need them) and drop everything else.
         while True:
             ready, _, _ = select.select([self._sock], [], [], 0.0)
             if not ready:
                 break
             try:
                 pkt = self._sock.recv(258)
-                self._event_buffer.append(pkt)
             except OSError:
                 break
+            if _is_adv_terminated(pkt) and pkt[5] != handle:
+                self._event_buffer.append(pkt)
 
-        # Remove all terminated events for this handle
-        self._event_buffer = [p for p in self._event_buffer if not is_terminated_event(p)]
+        # Drop any already-buffered terminated events for this handle, keeping
+        # the buffer a bounded deque.
+        self._event_buffer = deque(
+            (p for p in self._event_buffer if not is_terminated_event(p)),
+            maxlen=_EVENT_BUFFER_MAX,
+        )
 
     def _warn_if_bad_random_address(self, mac: str, addr_bytes: bytes) -> None:
         """Log a warning if MAC doesn't satisfy BLE Static Random Address format."""
