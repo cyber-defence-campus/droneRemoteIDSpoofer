@@ -61,11 +61,13 @@ def build_location_vector(lat: int, lng: int, direction: int,
     Args:
         timestamp_offset: Minutes to shift the ASTM timestamp.
             Negative values produce timestamps in the past.
-            The field wraps within the current hour (0-5999 tenth-seconds).
+            The field wraps within the current hour (0-35999 tenth-seconds).
     """
     dir_val, ew_dir = _transform_rotation(direction)
     now = datetime.now() + timedelta(minutes=timestamp_offset)
-    tenth_seconds = (now.minute * 600 + now.second * 10) % 6000
+    # ASTM F3411 Location Timestamp: tenths of a second since the top of the
+    # hour (valid 0-36000). Wrap within the full hour, not every 10 minutes.
+    tenth_seconds = (now.minute * 600 + now.second * 10 + now.microsecond // 100000) % 36000
 
     return b''.join([
         struct.pack("<B", (MsgType.LOCATION << 4) | protocol_version),
