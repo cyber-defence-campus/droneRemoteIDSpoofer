@@ -18,6 +18,8 @@ Note that CLI flags override config values.
 - `location` ([lat, lng]): base coordinates in decimal degrees. Default: Zurich.
 - `random` (int): number of random drones if `drones` is empty. Default: `1`.
 - `transport` (string): `"wifi"`, `"ble"`, `"nan"`, `"both"`, or `"all"`. Default: `"wifi"`.
+- `no_self_id` (bool): omit the Self ID (Type 3) message from every drone to reduce airtime and maximize concurrent drones. Default: `false`. CLI `--no-self-id` / `--self-id` override this in either direction.
+- `no_operator_id` (bool): omit the Operator ID (Type 5) message from every drone. Default: `false`. CLI `--no-operator-id` / `--operator-id` override this in either direction.
 - `ble` (object): BLE-specific settings (optional).
   - `adapter` (string): HCI adapter name. Default: `"hci0"`.
   - `mode` (string): `"extended"` (default), `"ext-legacy"`, `"legacy"`, or `"dual"`.
@@ -25,7 +27,7 @@ Note that CLI flags override config values.
   - `extended_interval_ms` (int): pulse rate for BLE 5 extended pack in ms. Default: same as `advertising_interval_ms`.
 - `wifi` (object): Wi-Fi-specific settings (optional).
   - `channel` (int): Wi-Fi channel for injection. Default: `6`.
-  - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`.
+  - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`. CLI `--wifi-ess` / `--no-wifi-ess` override this in either direction.
   - `beacon_interval` (number): Wi-Fi beacon transmission interval in seconds. Default: `0.1024`.
 - `nan` (object): Wi-Fi NAN/Aware settings (optional).
   - `mode` (string): `"bridge"` (Android TCP bridge) or `"manual"` (direct Linux raw packet injection). Default: `"bridge"`.

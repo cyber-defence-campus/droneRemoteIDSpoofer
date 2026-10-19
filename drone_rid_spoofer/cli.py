@@ -64,13 +64,22 @@ def parse_args() -> argparse.Namespace:
                              "'ext-legacy' (BLE 4 Legacy PDUs via Extended HCI commands, for modern BLE 5 adapters), "
                              "'legacy' (BLE 4 Legacy Advertising via classic HCI commands), "
                              "or 'dual' (both BLE 4 Legacy + BLE 5 Extended)")
-    parser.add_argument("--wifi-ess", action="store_true", default=None,
+    # Tri-state booleans: each flag and its negation share a dest with
+    # default=None, so "not given" (None) falls through to the scenario config
+    # and a CLI flag can override a config-set value in either direction.
+    parser.add_argument("--wifi-ess", dest="wifi_ess", action="store_true", default=None,
                         help="Set the ESS capability bit on Wi-Fi beacons "
-                             "(default: off; spoofed drone is not advertised as an AP)")
-    parser.add_argument("--no-self-id", action="store_true", default=None,
+                             "(spoofed drone advertised as an AP). Default: off.")
+    parser.add_argument("--no-wifi-ess", dest="wifi_ess", action="store_false",
+                        help="Clear the ESS capability bit (override a scenario that set it)")
+    parser.add_argument("--no-self-id", dest="no_self_id", action="store_true", default=None,
                         help="Omit the Self ID message to reduce airtime and maximize concurrent drones")
-    parser.add_argument("--no-operator-id", action="store_true", default=None,
+    parser.add_argument("--self-id", dest="no_self_id", action="store_false",
+                        help="Force-include the Self ID message (override a scenario that omitted it)")
+    parser.add_argument("--no-operator-id", dest="no_operator_id", action="store_true", default=None,
                         help="Omit the Operator ID message to reduce airtime and maximize concurrent drones")
+    parser.add_argument("--operator-id", dest="no_operator_id", action="store_false",
+                        help="Force-include the Operator ID message (override a scenario that omitted it)")
     parser.add_argument("--wifi-channel", type=int, default=None,
                         help="Wi-Fi channel to broadcast on (default: 6)")
     parser.add_argument("--wifi-beacon-interval", type=float, default=None,
