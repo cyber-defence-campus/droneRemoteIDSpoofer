@@ -42,6 +42,21 @@ source .venv/bin/activate
 pip install -e .          # add [dev] for pytest/build tooling
 ```
 
+> **Tip — tab-completion**
+>
+> Install bash completion for the `drone-spoofer` command (interface names after
+> `-i`, Wi-Fi channels after `--wifi-channel`, BLE adapters, transport/mode choices):
+> ```bash
+> ./completion/install-completion.sh      # add sudo to also install system-wide
+> ```
+> Then restart your shell. Since the spoofer needs root, use the entry point by
+> path so completion fires *and* sudo's `secure_path` is bypassed:
+> ```bash
+> sudo .venv/bin/drone-spoofer -i <tab>
+> ```
+> (It also completes for `drone-spoofer …` without sudo.) To load completion for
+> the current shell only: `source completion/drone-spoofer.bash`.
+
 ### Run your first spoof - Single drone
 
 **Wi-Fi** — just point the spoofer at your adapter; it configures monitor mode
