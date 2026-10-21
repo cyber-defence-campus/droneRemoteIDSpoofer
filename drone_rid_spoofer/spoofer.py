@@ -8,6 +8,7 @@ import tty
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.helpers import (
     generate_ble_mac,
     generate_wifi_mac,
@@ -20,7 +21,6 @@ from drone_rid_spoofer.helpers import (
     random_speed,
     random_vertical_speed,
 )
-from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.messages import build_all_messages
 from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
@@ -82,7 +82,7 @@ class DroneSpoofer:
         next_send = datetime.now()
         stdin_fd = sys.stdin.fileno()
         original_settings = termios.tcgetattr(stdin_fd)
-        
+
         self._gen_lock = GenerationLock()
         builder = self._get_packet_builder()
         for backend in self.backends:
@@ -100,11 +100,11 @@ class DroneSpoofer:
                 if self._has_keyboard_input():
                     key = sys.stdin.read(1)
                     self._process_movement_key(drone, key)
-                
+
                 # 2. Advance deadline for next tick
                 if now >= next_tick:
                     logger.debug(f"Tick for {drone.serial.decode()}")
-                    
+
                     # Schedule next tick
                     next_tick += interval
                     # If we fell behind, skip ahead to avoid burst catch-up
@@ -298,13 +298,13 @@ class DroneSpoofer:
 
     def _run_automatic_loop(self, drones: List[DroneState]) -> None:
         interval = float(self.args.interval)
-        
+
         # Initialize end_time for all drones based on when the loop actually starts
         loop_start_time = datetime.now()
         for drone in drones:
             if getattr(drone, 'lifespan_seconds', 0) > 0:
                 drone.end_time = loop_start_time + timedelta(seconds=drone.lifespan_seconds)
-                
+
         self._gen_lock = GenerationLock()
         builder = self._get_packet_builder()
         for backend in self.backends:
@@ -347,14 +347,14 @@ class DroneSpoofer:
 
                 packet_batch_count += 1
                 logger.info(f"Sent batch {packet_batch_count} ({active_count} active drones)")
-                
+
                 if active_count == 0:
                     logger.info("No active drones remaining; stopping automatic mode")
                     break
-                    
+
                 # 2. Advance deadline for next batch
                 next_tick += interval
-                
+
                 # 3. If the work took longer than the interval, slide the deadline forward
                 # to prevent a "catch-up" burst of packets.
                 now = time.time()

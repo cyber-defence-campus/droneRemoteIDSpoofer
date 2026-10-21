@@ -8,15 +8,15 @@ import random
 import socket
 import threading
 import time
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
 from scapy.all import RadioTap
 
-from drone_rid_spoofer.state import DroneState
-from drone_rid_spoofer.messages import MsgType
 from drone_rid_spoofer.generation_lock import GenerationLock
+from drone_rid_spoofer.messages import MsgType
+from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
-from drone_rid_spoofer.transport.wifi_interface import setup_monitor_mode, restore_managed_mode
+from drone_rid_spoofer.transport.wifi_interface import restore_managed_mode, setup_monitor_mode
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class NanBridgeBackend(TransportBackend):
         # Wait until drones are populated
         while not self._stop_event.is_set() and not self._drones:
             time.sleep(0.01)
-            
+
         next_tick = time.time()
         while not self._stop_event.is_set():
             self._drain_removals()
@@ -140,7 +140,7 @@ class NanBridgeBackend(TransportBackend):
 
                 counter = self._counters.get(drone_key, 0)
                 self._counters[drone_key] = (counter + 1) & 0xFF
-                
+
                 pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
                 pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
                 msg_count = self.fuzz_config.get("pack_msg_count", len(messages) & 0xFF)
@@ -158,12 +158,12 @@ class NanBridgeBackend(TransportBackend):
                     "payload": payload_b64
                 }
                 self._send_command(payload_cmd)
-                
+
             next_tick += self.update_interval
             now = time.time()
             if next_tick < now:
                 next_tick = now
-                
+
             sleep_time = next_tick - time.time()
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -482,7 +482,7 @@ class NanManualBackend(TransportBackend):
                         sdf_pkt = getattr(self, "radiotap_bytes", b"") + b"".join(messages)
                     else:
                         sdf_pkt = self._build_nan_sdf(drone, drone_mac, messages, counter, seq_num)
-                        
+
                     try:
                         self._sock.send(sdf_pkt)
                     except Exception as e:

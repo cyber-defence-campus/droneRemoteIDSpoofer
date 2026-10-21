@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Tuple, List, Optional
+from typing import List, Optional, Tuple
 
 from drone_rid_spoofer.helpers import drift, random_location
 

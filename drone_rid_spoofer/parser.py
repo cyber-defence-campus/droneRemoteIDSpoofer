@@ -14,8 +14,8 @@ Standard library only (struct, datetime, re) with zero external dependencies.
 """
 
 import base64
-import struct
 import re
+import struct
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple

@@ -2,16 +2,15 @@ import logging
 import socket
 import threading
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional
 
-from scapy.all import sendp
 import scapy.layers.dot11 as dot11
 
-from drone_rid_spoofer.state import DroneState
-from drone_rid_spoofer.messages import MsgType
 from drone_rid_spoofer.generation_lock import GenerationLock
+from drone_rid_spoofer.messages import MsgType
+from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
-from drone_rid_spoofer.transport.wifi_interface import setup_monitor_mode, restore_managed_mode
+from drone_rid_spoofer.transport.wifi_interface import restore_managed_mode, setup_monitor_mode
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ class WifiBackend(TransportBackend):
 
         # Message pack header: msg_type (0xF = Pack) + ver, msg_size (0x19 = 25 bytes)
         self.pack_header_prefix = bytes([(MsgType.PACK << 4) | self.protocol_version, 0x19])
-        
+
         # ODID message-pack counter: must increment per transmission so
         # receivers treat each beacon as a fresh message rather than a duplicate.
         self._counter = 0
@@ -88,9 +87,9 @@ class WifiBackend(TransportBackend):
         # Wait until drones are provided before starting the metronome
         while self._running and not self._drones:
             time.sleep(0.01)
-            
+
         dest_bytes = bytes.fromhex(self.DEST_ADDR.replace(':', ''))
-        
+
         is_5ghz = self.channel >= 36
         if is_5ghz:
             supp_rates = b'\x8c\x12\x98\x24'  # 6, 9, 12, 18 Mbps (6, 12 basic)
@@ -108,7 +107,7 @@ class WifiBackend(TransportBackend):
         ie_erp = dot11.Dot11Elt(ID='ERPinfo', info=b'\x00')
         ie_esr = dot11.Dot11Elt(ID='ESRates', info=ext_rates)
         static_ies_bytes = bytes(ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr)
-        
+
         radiotap_bytes = bytes(dot11.RadioTap(present='Rate', Rate=effective_rate))
 
         next_tick = time.time()
@@ -117,10 +116,10 @@ class WifiBackend(TransportBackend):
             t_loop_start = time.time()
             packets = []
             current_tsf = int(time.time() * 1000000) % (2**64)
-            
+
             # Beacon Base (Timestamp & Cap) is identical for all drones in the same batch
             beacon_base_bytes = bytes(dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf))
-            
+
             t_build_start = time.time()
             for drone, messages in self._active_packets():
                 serial = drone.serial
@@ -129,10 +128,10 @@ class WifiBackend(TransportBackend):
                 # Handle sequence and counters
                 seq_num = self._seq_nums.get(serial, 0)
                 self._seq_nums[serial] = (seq_num + 1) % 4096
-                
+
                 msg_count_val = self._msg_counters.get(serial, 0)
                 self._msg_counters[serial] = (msg_count_val + 1) & 0xFF
-                
+
                 if self.fuzz_config and self.fuzz_config.get("raw_injection"):
                     rate_500kbps = int(self.rate_mbps * 2)
                     radiotap = dot11.RadioTap(present='Rate', Rate=rate_500kbps)
@@ -142,36 +141,36 @@ class WifiBackend(TransportBackend):
                     pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
                     pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
                     pack_msg_count = self.fuzz_config.get("pack_msg_count", len(messages) & 0xFF)
-                    
+
                     header = bytes([self.APP_CODE, msg_count_val, pack_type_ver & 0xFF, pack_msg_size & 0xFF, pack_msg_count & 0xFF])
                     vendor_data = header + b''.join(messages)
-    
+
                     serial_str = serial.decode('ascii', errors='replace')
                     ssid = (self.SSID_PREFIX + serial_str)[: self.SSID_MAX_LEN]
-                    
+
                     # 1. Dynamic SSID IE: ID=0, Length, Payload
                     ssid_bytes = ssid.encode('ascii', errors='replace')
                     ie_ssid_bytes = b'\x00' + bytes([len(ssid_bytes)]) + ssid_bytes
-                    
+
                     # 2. Dynamic Vendor IE: ID=221 (0xDD), Length, OUI + Payload
                     vendor_info = self.OUI + vendor_data
                     ie_vendor_bytes = b'\xdd' + bytes([len(vendor_info)]) + vendor_info
-                    
+
                     # 3. Dynamic MAC Header: Frame Control (0x8000), Duration (0x0000), Addr1, Addr2, Addr3, Sequence
                     import struct
                     mac_bytes = bytes.fromhex(mac_addr.replace(':', ''))
                     seq_ctrl = (seq_num << 4) & 0xFFFF
                     mac_header_bytes = b'\x80\x00\x00\x00' + dest_bytes + mac_bytes + mac_bytes + struct.pack('<H', seq_ctrl)
-                    
+
                     # Construct final raw frame in microseconds
                     frame = radiotap_bytes + mac_header_bytes + beacon_base_bytes + ie_ssid_bytes + static_ies_bytes + ie_vendor_bytes
                     packets.append(frame)
 
-                
+
             t_build_end = time.time()
             if hasattr(self, 'build_times'):
                 self.build_times.append(t_build_end - t_build_start)
-                
+
             if packets:
                 try:
                     t0 = time.time()
@@ -182,24 +181,24 @@ class WifiBackend(TransportBackend):
                         self.inject_times.append(t1 - t0)
                 except Exception as e:
                     logger.debug(f"Wi-Fi transmit error: {e}")
-                    
+
             t_loop_end = time.time()
             if hasattr(self, 'loop_times'):
                 self.loop_times.append(t_loop_end - t_loop_start)
-                    
+
             next_tick += self.beacon_interval
             now = time.time()
             if next_tick < now:
                 # We missed our deadline. Catch up to 'now' so we don't force a full sleep cycle.
                 miss_amount = now - next_tick
                 self.missed_deadlines += 1
-                
+
                 # Throttle the logging to prevent a cascading I/O terminal bottleneck
                 #if self.missed_deadlines == 1 or self.missed_deadlines % 50 == 0:
                 logger.warning(f"Wi-Fi deadline missed by {miss_amount*1000:.2f}ms! (Total missed: {self.missed_deadlines})")
-                
+
                 next_tick = now
-                
+
             sleep_time = next_tick - time.time()
             if sleep_time > 0:
                 time.sleep(sleep_time)

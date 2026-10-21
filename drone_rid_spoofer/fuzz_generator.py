@@ -4,22 +4,17 @@ Core Fuzzing Generators and Mutators for ASTM F3411 Remote ID.
 Contains specialized mutation classes for evaluating receiver memory resilience,
 parser buffer safety, reassembly state machines, and sanitization pipelines.
 """
-import random
 import struct
 import time
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Tuple
+
 from drone_rid_spoofer.messages import (
     MsgType,
+    _transform_rotation,
+    build_all_messages,
     build_basic_id,
     build_location_vector,
     build_system,
-    build_self_id,
-    build_operator_id,
-    build_all_messages,
-    _encode_speed,
-    _encode_vertical_speed,
-    _encode_altitude,
-    _transform_rotation,
 )
 from drone_rid_spoofer.state import DroneState
 
@@ -38,7 +33,7 @@ def build_auth_page_0(auth_type: int = 2, page_count: int = 1, length: int = 38,
         page_count & 0xFF,
         length & 0xFF
     ]) + struct.pack("<I", timestamp & 0xFFFFFFFF)
-    
+
     body = (auth_data + b'\x00' * 16)[:16]
     return header + body
 
@@ -153,7 +148,7 @@ class RidFuzzer:
             Tuple of (messages_list, fuzz_config_dict, description_string)
         """
         self._iteration += 1
-        
+
         active_cat = self.category
         if active_cat == FuzzCategory.ALL:
             categories = [
@@ -231,11 +226,11 @@ class RidFuzzer:
 
         elif active_cat == FuzzCategory.STRING_INJECTION:
             basic_payload, self_payload = self.string_payloads[self._iteration % len(self.string_payloads)]
-            
+
             # Custom basic ID without standard termination/padding rules
             header_basic = bytes([(MsgType.BASIC_ID << 4) | 0x02, 0x12])
             custom_basic = (header_basic + basic_payload.ljust(23, b'\x41'))[:25]
-            
+
             header_self = bytes([(MsgType.SELF_ID << 4) | 0x02, 0x00])
             custom_self = (header_self + self_payload.ljust(23, b'\x42'))[:25]
 
@@ -250,7 +245,7 @@ class RidFuzzer:
 
         elif active_cat == FuzzCategory.KINEMATICS:
             edge = self.kinematic_edge_cases[self._iteration % len(self.kinematic_edge_cases)]
-            
+
             # Construct raw location message with forced illegal coordinates and angles
             dir_val, ew_dir = _transform_rotation(edge["dir"])
             raw_loc = b''.join([
@@ -296,7 +291,7 @@ class RidFuzzer:
             for m in build_all_messages(drone):
                 new_byte0 = ((m[0] & 0xF0) | ver_override) & 0xFF
                 msgs.append(bytes([new_byte0]) + m[1:])
-                
+
             cfg = {"pack_type_ver": (MsgType.PACK << 4) | ver_override}
             desc = f"Protocol Version Fuzzing -> Forcing version nibble to 0x{ver_override:X}"
             return msgs, cfg, desc

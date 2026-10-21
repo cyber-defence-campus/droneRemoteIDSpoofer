@@ -25,14 +25,14 @@ import select
 import socket
 import struct
 import subprocess
-import time
 import threading
+import time
 from collections import deque
 from typing import Deque, Dict, List, Optional
 
-from drone_rid_spoofer.state import DroneState
-from drone_rid_spoofer.messages import MsgType
 from drone_rid_spoofer.generation_lock import GenerationLock
+from drone_rid_spoofer.messages import MsgType
+from drone_rid_spoofer.state import DroneState
 from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
@@ -356,22 +356,22 @@ class _BleBase(TransportBackend):
 
         if static_msgs:
             cycle_count = self._cycle_counts.get(drone_key, 0)
-            
+
             # Use drone_key to stagger the heavy cycle across different drones
             offset = sum(drone_key) % 3
             c = cycle_count + offset
-            
+
             # Send 2 statics every 3rd cycle, otherwise 1 static (averages 1.33)
             num_statics = 2 if (c % 3) == 0 else 1
-            
+
             idx = self._static_index.get(drone_key, 0)
             for _ in range(min(num_statics, len(static_msgs))):
                 sequence.append(static_msgs[idx % len(static_msgs)])
                 idx += 1
-                
+
             self._static_index[drone_key] = idx % len(static_msgs)
             self._cycle_counts[drone_key] = cycle_count + 1
-            
+
         return sequence
 
     def _build_legacy_ad(self, message: bytes, counter: int) -> bytes:
@@ -506,7 +506,7 @@ class BleLegacyBackend(_BleBase):
             if not self._sock:
                 time.sleep(0.1)
                 continue
-                
+
             self._drain_removals()
 
             active_packets = self._active_packets()
@@ -530,7 +530,7 @@ class BleLegacyBackend(_BleBase):
             for drone, send_sequence in all_sequences:
                 if not self._running:
                     break
-                    
+
                 drone_key = drone.serial
 
                 # Disable advertising before reconfiguring
@@ -726,11 +726,11 @@ class BleExtendedBackend(_BleBase):
             pack_msgs = messages[:9]
         else:
             pack_msgs = messages
-            
+
         pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
         pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
         msg_count = self.fuzz_config.get("pack_msg_count", len(pack_msgs) & 0xFF)
-        
+
         service_data = (
             ASTM_UUID
             + bytes([ASTM_APP_CODE, counter & 0xFF])
@@ -749,7 +749,7 @@ class BleExtendedBackend(_BleBase):
             if not self._sock:
                 time.sleep(0.1)
                 continue
-                
+
             self._drain_removals()
 
             active_packets = [
@@ -768,7 +768,7 @@ class BleExtendedBackend(_BleBase):
                 drone_key = drone.serial
                 send_sequence = self._build_send_sequence(drone_key, messages)
                 all_sequences.append((drone, messages, send_sequence))
-                
+
                 drone_mode = getattr(drone, 'ble_mode', None)
                 if drone_mode:
                     drone_mode = drone_mode.replace("_", "-")
@@ -782,7 +782,7 @@ class BleExtendedBackend(_BleBase):
             for drone, messages, send_sequence in all_sequences:
                 if not self._running:
                     break
-                    
+
                 drone_key = drone.serial
 
                 if not hasattr(self, '_extended_counters'):

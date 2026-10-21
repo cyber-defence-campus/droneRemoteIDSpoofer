@@ -1,9 +1,10 @@
 import struct
 from datetime import datetime, timedelta
 from enum import IntEnum
-from typing import Tuple, List
+from typing import List, Tuple
 
 from drone_rid_spoofer.state import DroneState
+
 
 class MsgType(IntEnum):
     BASIC_ID = 0x0
