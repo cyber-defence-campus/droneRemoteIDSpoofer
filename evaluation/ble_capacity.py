@@ -54,8 +54,10 @@ class NrfSnifferThread(threading.Thread):
     Drives nrf_bt_sniffer_json.py as an autonomous background sniffer subprocess.
     Reads structured JSON records from stdout and compiles reception timestamps by MAC address.
     """
-    def __init__(self, nrf_port: Optional[str], rx_pcap: Optional[str] = None, coded: bool = False, print_live: bool = False, ble_mode: str = "extended"):
+    def __init__(self, nrf_port: Optional[str], rx_pcap: Optional[str] = None, coded: bool = False, print_live: bool = False, ble_mode: str = "extended",
+                 filter_channels: Optional[List[int]] = None):
         super().__init__()
+        self.filter_channels = filter_channels
         self.nrf_port = nrf_port
         self.rx_pcap = rx_pcap
         self.coded = coded
@@ -96,6 +98,9 @@ class NrfSnifferThread(threading.Thread):
             cmd.extend(["--ble-mode", "hop"])
         elif self.ble_mode == "all":
             cmd.extend(["--ble-mode", "all"])
+
+        if self.filter_channels:
+            cmd.extend(["--filter-channel", *map(str, self.filter_channels)])
             
         try:
             # Redirect stdout to pipe to read stream of JSON lines; stderr remains attached for synchronization messages
@@ -424,7 +429,7 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
                    extended_interval_ms: Optional[int] = None,
                    no_self_id: bool = True, no_operator_id: bool = False,
                    coded_phy: bool = False, print_live: bool = False, optimize_params: bool = True,
-                   rx_mode: str = "auto"):
+                   rx_mode: str = "auto", filter_channels: Optional[List[int]] = None):
     
     # Map legacy transport alias if passed
     mode_map = {
@@ -485,7 +490,7 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
     rx_sniffer = None
     if nrf_port or rx_pcap:
         sniffer_ble_mode = "extended" if coded_phy else "legacy"
-        rx_sniffer = NrfSnifferThread(nrf_port=nrf_port, rx_pcap=rx_pcap, coded=coded_phy, print_live=print_live, ble_mode=sniffer_ble_mode)
+        rx_sniffer = NrfSnifferThread(nrf_port=nrf_port, rx_pcap=rx_pcap, coded=coded_phy, print_live=print_live, ble_mode=sniffer_ble_mode, filter_channels=filter_channels)
         rx_sniffer.start()
         time.sleep(1.0)
         wait_for_sniffer_ready(2, "Waiting 2s for nRF sniffer radio to initialize and stabilize on channel...")
@@ -715,6 +720,7 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
         "interval": interval,
         "ble_mode": mode,
         "rx_mode": active_rx_mode,
+        "rx_channels": filter_channels,
         "transport": mode,
         "tx_adapter": tx_adapter,
         "ble_interval_ms": ble_interval_ms,
@@ -809,6 +815,7 @@ def main():
     parser.add_argument("--legacy-interval-ms", type=int, default=None, help="BLE 4 legacy advertising interval in ms (overrides --ble-interval-ms for legacy/dual)")
     parser.add_argument("--extended-interval-ms", type=int, default=None, help="BLE 5 extended advertising interval in ms (overrides --ble-interval-ms for extended/dual)")
     parser.add_argument("--rx-mode", choices=["auto", "ble4", "ble5"], default="auto", help="Sniffer capture mode: 'ble5' (Coded PHY), 'ble4' (1M Legacy), or 'auto'")
+    parser.add_argument("-c", "--filter-channel", dest="filter_channels", type=int, nargs="+", choices=range(0, 40), metavar="CH", help="Only count sniffed packets received on these BLE RF channels (e.g. 37), passed to nrf_bt_sniffer_json.py")
     parser.add_argument("--with-self-id", action="store_false", dest="no_self_id", default=True, help="Enable Self ID message (disabled by default)")
     parser.add_argument("--no-operator-id", action="store_true", help="Disable Operator ID message")
     parser.add_argument("--debug-sniff", "--print-packets", action="store_true", help="Continuously print received packets in real-time JSON format")
@@ -850,7 +857,8 @@ def main():
                             if (item.get("drones") == res.get("drones") and 
                                 item.get("ble_mode", item.get("transport")) == res.get("ble_mode", res.get("transport")) and 
                                 item.get("ble_interval_ms") == res.get("ble_interval_ms") and
-                                item.get("rx_mode") == res.get("rx_mode")):
+                                item.get("rx_mode") == res.get("rx_mode") and
+                                item.get("rx_channels") == res.get("rx_channels")):
                                 matched_idx = idx_item
                                 break
                         if matched_idx >= 0:
@@ -889,7 +897,8 @@ def main():
                 no_operator_id=args.no_operator_id,
                 print_live=args.debug_sniff,
                 optimize_params=args.optimize_params,
-                rx_mode=args.rx_mode
+                rx_mode=args.rx_mode,
+                filter_channels=args.filter_channels
             )
             results.append(res)
             flush_results_to_disk()

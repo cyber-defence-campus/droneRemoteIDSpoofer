@@ -64,6 +64,53 @@ group_by_mac_enabled: bool = False
 stats_format_choice: str = "table"
 pretty_json_choice: bool = False
 
+# Channel filter state for BT5: latest AuxPtr seen per advertising set (ADI),
+# used to accept secondary-channel packets whose pointer arrived on a filtered channel.
+# ADI -> {"origin_ok": bool, "primary_channel": int, "aux_channel": int, "ts": float}
+last_aux_ptr: Dict[Optional[int], Dict[str, Any]] = {}
+AUX_PTR_MATCH_WINDOW_S = 0.5
+
+# Wireshark extcap shim of nrfutil ble-sniffer; unlike `nrfutil ble-sniffer sniff` it exposes
+# the "Adv Hop" toolbar control, which pins the primary advertising channel hop sequence.
+EXTCAP_SHIM_NAME = "nrfutil-ble-sniffer-shim"
+EXTCAP_ADV_HOP_CONTROL = 3
+EXTCAP_CMD_SET = 1
+# The shim ignores controls sent before it is ready, so the setting is (idempotently) resent
+ADV_HOP_RESEND_DELAYS_S = (0.5, 1.0, 2.0, 3.0, 5.0)
+
+
+def find_extcap_shim() -> Optional[str]:
+    """Locates the nrfutil ble-sniffer extcap shim (installed by `nrfutil ble-sniffer bootstrap`)."""
+    homes = [os.path.expanduser("~")]
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        homes.insert(0, os.path.expanduser(f"~{sudo_user}"))
+    # Root shells without SUDO_USER (e.g. `sudo su`): fall back to the home of this script's owner
+    try:
+        import pwd
+        homes.append(pwd.getpwuid(os.stat(__file__).st_uid).pw_dir)
+    except (ImportError, KeyError, OSError):
+        pass
+    candidates = []
+    for home in homes:
+        candidates += [
+            os.path.join(home, ".local", "lib", "wireshark", "extcap", EXTCAP_SHIM_NAME),
+            os.path.join(home, ".config", "wireshark", "extcap", EXTCAP_SHIM_NAME),
+        ]
+    candidates += [
+        os.path.join("/usr/lib/x86_64-linux-gnu/wireshark/extcap", EXTCAP_SHIM_NAME),
+        os.path.join("/usr/lib/wireshark/extcap", EXTCAP_SHIM_NAME),
+    ]
+    for path in candidates:
+        if os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def build_extcap_control_frame(control: int, command: int, payload: bytes = b"") -> bytes:
+    """Wireshark extcap control frame: 'T' sync, 3-byte big-endian length, control number, command, payload."""
+    return b"T" + struct.pack(">I", len(payload) + 2)[1:] + bytes([control, command]) + payload
+
 
 class BleModeHopperController:
     """
@@ -78,8 +125,14 @@ class BleModeHopperController:
         bt5_dwell_s: float = 5.0,
         bt4_dwell_s: float = 1.0,
         filter_mac: Optional[str] = None,
+        adv_hop: Optional[List[int]] = None,
     ):
         self.nrf_port = nrf_port
+        self.adv_hop = adv_hop
+        self.shim_path = find_extcap_shim() if adv_hop else None
+        if adv_hop and not self.shim_path:
+            sys.stderr.write(f"[!] Warning: {EXTCAP_SHIM_NAME} not found (run `nrfutil ble-sniffer bootstrap`); "
+                             f"cannot pin Adv Hop, sniffer will hop 37/38/39 and rely on host-side channel filtering.\n")
         self.pcap_path = pcap_path
         self.mode = mode
         self.bt5_dwell_s = max(0.1, bt5_dwell_s)
@@ -92,7 +145,11 @@ class BleModeHopperController:
         self._lock = threading.Lock()
 
     def _get_cmd_for_mode(self, mode: str) -> List[str]:
-        cmd = ["nrfutil", "ble-sniffer", "sniff", "--port", self.nrf_port, "--output-pcap-file", self.pcap_path]
+        if self.shim_path:
+            cmd = [self.shim_path, "--capture", "--extcap-interface", self.nrf_port, "--fifo", self.pcap_path,
+                   "--extcap-control-in", self.pcap_path + ".ctl_in", "--extcap-control-out", self.pcap_path + ".ctl_out"]
+        else:
+            cmd = ["nrfutil", "ble-sniffer", "sniff", "--port", self.nrf_port, "--output-pcap-file", self.pcap_path]
         if mode == "bt4":
             cmd.append("--only-legacy_advertising")
         elif mode == "bt5":
@@ -110,9 +167,72 @@ class BleModeHopperController:
                 "--coded"
             ])
 
-        if self.filter_mac:
+        # The extcap shim has no --follow; MAC filtering then happens host-side only
+        if self.filter_mac and not self.shim_path:
             cmd.extend(["--follow", self.filter_mac])
         return cmd
+
+    def _start_adv_hop_control(self, proc: subprocess.Popen):
+        """Creates the extcap control FIFOs and sends the Adv Hop setting to the shim."""
+        ctl_in, ctl_out = self.pcap_path + ".ctl_in", self.pcap_path + ".ctl_out"
+        frame = build_extcap_control_frame(EXTCAP_ADV_HOP_CONTROL, EXTCAP_CMD_SET,
+                                           ",".join(map(str, self.adv_hop)).encode())
+
+        def drain_control_out():
+            # The shim streams log/device-list messages here and blocks if nobody reads
+            try:
+                with open(ctl_out, "rb", buffering=0) as f:
+                    while f.read(4096):
+                        pass
+            except OSError:
+                pass
+
+        def send_adv_hop():
+            try:
+                with open(ctl_in, "wb", buffering=0) as f:
+                    t0 = time.time()
+                    for delay in ADV_HOP_RESEND_DELAYS_S:
+                        time.sleep(max(0.0, delay - (time.time() - t0)))
+                        if proc.poll() is not None:
+                            return
+                        f.write(frame)
+                    # Keep the control pipe open for the lifetime of the capture, as Wireshark does
+                    while proc.poll() is None and self.running:
+                        time.sleep(0.2)
+            except OSError:
+                pass
+
+        threading.Thread(target=drain_control_out, daemon=True).start()
+        threading.Thread(target=send_adv_hop, daemon=True).start()
+
+    def _spawn(self, cmd: List[str]) -> subprocess.Popen:
+        user_kwargs: Dict[str, Any] = {}
+        if self.shim_path:
+            for path in (self.pcap_path + ".ctl_in", self.pcap_path + ".ctl_out"):
+                if os.path.exists(path):
+                    os.remove(path)
+                os.mkfifo(path)
+            # The shim wipes the environment before launching nrfutil, which then resolves its
+            # installed commands from the running user's home (/root/.nrfutil under sudo, where
+            # ble-sniffer is not installed). Run the shim as its owner instead when we are root.
+            if os.geteuid() == 0:
+                try:
+                    import pwd
+                    owner = pwd.getpwuid(os.stat(self.shim_path).st_uid)
+                    if owner.pw_uid != 0:
+                        for path in (self.pcap_path, self.pcap_path + ".ctl_in", self.pcap_path + ".ctl_out"):
+                            os.chmod(path, 0o666)
+                        user_kwargs = {
+                            "user": owner.pw_uid,
+                            "group": owner.pw_gid,
+                            "extra_groups": os.getgrouplist(owner.pw_name, owner.pw_gid),
+                        }
+                except (ImportError, KeyError, OSError) as e:
+                    sys.stderr.write(f"[!] Warning: could not drop privileges for {EXTCAP_SHIM_NAME}: {e}\n")
+        proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, start_new_session=True, **user_kwargs)
+        if self.shim_path:
+            self._start_adv_hop_control(proc)
+        return proc
 
     def _run_loop(self):
         if self.mode != "hop":
@@ -122,11 +242,7 @@ class BleModeHopperController:
                 with self._lock:
                     sys.stderr.write(f"[{self.current_mode}] Spawning nrfutil with command: {' '.join(cmd)}\n")
                     sys.stderr.flush()
-                    self.proc = subprocess.Popen(
-                        cmd,
-                        stderr=subprocess.PIPE,
-                        start_new_session=True
-                    )
+                    self.proc = self._spawn(cmd)
             except FileNotFoundError:
                 sys.stderr.write("[-] Error: 'nrfutil' command not found in PATH. Please install nrfutil and ble-sniffer plugin.\n")
                 self.running = False
@@ -165,11 +281,7 @@ class BleModeHopperController:
                 with self._lock:
                     sys.stderr.write(f"[{self.current_mode}] Spawning nrfutil with command: {' '.join(cmd)}\n")
                     sys.stderr.flush()
-                    self.proc = subprocess.Popen(
-                        cmd,
-                        stderr=subprocess.PIPE,
-                        start_new_session=True
-                    )
+                    self.proc = self._spawn(cmd)
             except FileNotFoundError:
                 sys.stderr.write("[-] Error: 'nrfutil' command not found in PATH. Please install nrfutil and ble-sniffer plugin.\n")
                 self.running = False
@@ -404,11 +516,13 @@ def cleanup(signum=None, frame=None):
         out_file_handle.close()
         out_file_handle = None
 
-    if fifo_created_path and os.path.exists(fifo_created_path):
-        try:
-            os.remove(fifo_created_path)
-        except OSError:
-            pass
+    if fifo_created_path:
+        for path in (fifo_created_path, fifo_created_path + ".ctl_in", fifo_created_path + ".ctl_out"):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     sys.stderr.write("[*] Capture stopped.\n")
     sys.exit(0)
@@ -549,6 +663,84 @@ def parse_packet_metadata(data: bytes) -> Tuple[str, str, Optional[int], Optiona
     return pdu_type_str, mac_address, rssi_dbm, rf_channel
 
 
+def parse_ext_adv_header(data: bytes) -> Optional[Tuple[Optional[int], Optional[int]]]:
+    """
+    Parses the Common Extended Advertising Payload header of an ADV_EXT_IND / AUX_* PDU
+    (Bluetooth Core Spec Vol 6 Part B §2.3.4) and returns (ADI, AuxPtr channel index).
+    Either may be None if the field is absent. Returns None for non-extended PDUs.
+    """
+    _, pdu_offset, _, _ = locate_ble_packet(data)
+    if pdu_offset == -1 or len(data) < pdu_offset + 3 or (data[pdu_offset] & 0x0F) != 0x07:
+        return None
+
+    ext_hdr_len = data[pdu_offset + 2] & 0x3F
+    ext_hdr = data[pdu_offset + 3 : pdu_offset + 3 + ext_hdr_len]
+    if not ext_hdr:
+        return None, None
+
+    flags = ext_hdr[0]
+    idx = 1
+    if flags & 0x01:  # AdvA
+        idx += 6
+    if flags & 0x02:  # TargetA
+        idx += 6
+    if flags & 0x04:  # CTEInfo
+        idx += 1
+
+    adi = None
+    if flags & 0x08:
+        if len(ext_hdr) < idx + 2:
+            return None, None
+        adi = ext_hdr[idx] | (ext_hdr[idx + 1] << 8)
+        idx += 2
+
+    aux_channel = None
+    if flags & 0x10:
+        if len(ext_hdr) >= idx + 3:
+            aux_channel = ext_hdr[idx] & 0x3F
+
+    return adi, aux_channel
+
+
+def channel_filter_accepts(data: bytes, rf_channel: Optional[int], ts: float, filter_channels: List[int]) -> Tuple[bool, Optional[int]]:
+    """
+    Decides whether a packet passes the RF channel filter. Returns (accepted, primary_channel).
+    Packets on a filtered channel always pass. BT5 secondary-channel packets (AUX_ADV_IND /
+    AUX_CHAIN_IND) also pass if the latest AuxPtr for their advertising set (ADI) was received
+    on a filtered primary channel and pointed to this packet's channel.
+    """
+    ext = parse_ext_adv_header(data)
+    adi, aux_channel = ext if ext else (None, None)
+
+    accepted = rf_channel in filter_channels
+    primary_channel = rf_channel if rf_channel is not None and rf_channel >= 37 else None
+
+    if not accepted and ext and rf_channel is not None and rf_channel < 37:
+        ptr = last_aux_ptr.get(adi)
+        if (
+            ptr
+            and ptr["origin_ok"]
+            and ptr["aux_channel"] == rf_channel
+            and 0 <= ts - ptr["ts"] <= AUX_PTR_MATCH_WINDOW_S
+        ):
+            accepted = True
+            primary_channel = ptr["primary_channel"]
+
+    # Track every AuxPtr (also from rejected packets) so a stale pointer from an earlier
+    # advertising event on a filtered channel cannot be matched by a later aux packet.
+    if aux_channel is not None:
+        if rf_channel is not None and rf_channel >= 37:
+            primary_channel = rf_channel
+        last_aux_ptr[adi] = {
+            "origin_ok": accepted,
+            "primary_channel": primary_channel,
+            "aux_channel": aux_channel,
+            "ts": ts,
+        }
+
+    return accepted, primary_channel
+
+
 def extract_remote_id_info(data: bytes, pdu_type_str: str) -> Optional[Dict[str, Any]]:
     """
     Extracts ASTM F3411 Remote ID information from raw packet bytes.
@@ -629,6 +821,7 @@ def process_packet(
     filter_mac_bytes_be: Optional[bytes] = None,
     group_by_mac: bool = False,
     active_ble_mode: Optional[str] = None,
+    filter_channels: Optional[List[int]] = None,
 ):
     """
     Processes raw link-layer bytes, decodes any present Remote ID ASTM payloads,
@@ -639,6 +832,14 @@ def process_packet(
         return
 
     pdu_type_str, mac_address, rssi_dbm, rf_channel = parse_packet_metadata(data)
+
+    # Apply RF channel filtering (packets with undecodable channel are dropped).
+    # BT5 aux packets pass if their AuxPtr was received on a filtered primary channel.
+    primary_channel = None
+    if filter_channels:
+        accepted, primary_channel = channel_filter_accepts(data, rf_channel, ts, filter_channels)
+        if not accepted:
+            return
 
     # Apply MAC address filtering (checks parsed MAC and raw link-layer bytes in header)
     if filter_mac:
@@ -713,6 +914,7 @@ def process_packet(
         "pdu_type": pdu_type_str,
         "mac": mac_address,
         "rf_channel": rf_channel,
+        "primary_rf_channel": primary_channel,
         "rssi_dbm": rssi_dbm,
         "raw_length": len(data),
         "raw_hex": data.hex().upper(),
@@ -744,7 +946,8 @@ def run_sniffer(
     group_by_mac: bool = False,
     stats_format: str = "table",
     stats_interval: float = 2.0,
-    raw_pcap_port: Optional[int] = None
+    raw_pcap_port: Optional[int] = None,
+    filter_channels: Optional[List[int]] = None
 ):
     global nrf_proc, hopper_controller, fifo_created_path
 
@@ -787,6 +990,7 @@ def run_sniffer(
             bt5_dwell_s=bt5_dwell_s,
             bt4_dwell_s=bt4_dwell_s,
             filter_mac=filter_mac,
+            adv_hop=sorted(ch for ch in (filter_channels or []) if ch >= 37) or None,
         )
         if ble_mode == "hop":
             sys.stderr.write(f"[*] Starting BLE Hopper Controller on {nrf_port} (Mode: hop, BT5: {bt5_dwell_s}s, BT4: {bt4_dwell_s}s)...\n")
@@ -804,6 +1008,8 @@ def run_sniffer(
         mode_parts.append("BT5 Extended Advertising")
     mode_desc = (" ONLY " + " & ".join(mode_parts) + " packets") if mode_parts else " ALL captured Bluetooth packets"
     mac_desc = f" from MAC {filter_mac}" if filter_mac else ""
+    if filter_channels:
+        mac_desc += f" on channel(s) {', '.join(map(str, filter_channels))}"
     output_mode_desc = f"grouped MAC statistics ({stats_format})" if group_by_mac else "JSON stream"
     
     sys.stderr.write(f"[*] Listening and displaying{mode_desc}{mac_desc} as {output_mode_desc}... (Press Ctrl+C to stop)\n\n")
@@ -872,7 +1078,8 @@ def run_sniffer(
 
                 data = f.read(incl_len)
                 while len(data) < incl_len:
-                    if hopper_controller and not hopper_controller.running:
+                    if not nrf_port or (hopper_controller and not hopper_controller.running):
+                        # Static PCAP file truncated mid-record (nothing more will arrive)
                         break
                     time.sleep(0.002)
                     more = f.read(incl_len - len(data))
@@ -920,7 +1127,8 @@ def run_sniffer(
                     filter_mac_bytes_le=filter_mac_bytes_le,
                     filter_mac_bytes_be=filter_mac_bytes_be,
                     group_by_mac=group_by_mac,
-                    active_ble_mode=active_mode
+                    active_ble_mode=active_mode,
+                    filter_channels=filter_channels
                 )
                 if group_by_mac and sys.stdout.isatty() and time.time() - last_display_time >= stats_interval and mac_stats:
                     display_mac_stats(stats_format=stats_format, pretty=pretty, clear_screen=True, stream=sys.stdout, is_final=False)
@@ -961,6 +1169,18 @@ def main():
     parser.add_argument(
         "-m", "--filter-mac",
         help="Filter captured packets by advertiser MAC address (case-insensitive, e.g. 3c:dc:75:9b:1e:d6)"
+    )
+    parser.add_argument(
+        "-c", "--filter-channel",
+        dest="filter_channels",
+        type=int,
+        nargs="+",
+        choices=range(0, 40),
+        metavar="CH",
+        help="Only output packets received on these BLE RF channels (0-39, e.g. 37 or 37 38). "
+             "BT5 aux packets on secondary channels are kept if their AuxPtr was received on a "
+             "listed channel. With a live dongle, listed channels 37-39 also pin the sniffer's "
+             "advertising channel hop sequence (Adv Hop) via the nrfutil extcap shim"
     )
     parser.add_argument(
         "--pretty",
@@ -1061,7 +1281,8 @@ def main():
         group_by_mac=args.group_by_mac,
         stats_format=args.stats_format,
         stats_interval=args.stats_interval,
-        raw_pcap_port=args.raw_pcap_port
+        raw_pcap_port=args.raw_pcap_port,
+        filter_channels=args.filter_channels
     )
 
 

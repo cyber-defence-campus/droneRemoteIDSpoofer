@@ -86,6 +86,7 @@ def main():
     parser.add_argument("--legacy-interval-ms", type=int, default=None, help="BLE 4 legacy advertising interval in ms (for dual/legacy)")
     parser.add_argument("--extended-interval-ms", type=int, default=None, help="BLE 5 extended advertising interval in ms (for dual/extended)")
     parser.add_argument("--rx-mode", choices=["auto", "ble4", "ble5"], default="auto", help="Sniffer capture mode (default: auto)")
+    parser.add_argument("-c", "--filter-channel", dest="filter_channels", type=int, nargs="+", choices=range(0, 40), metavar="CH", help="Only count sniffed packets received on these BLE RF channels (e.g. 37)")
     parser.add_argument("--duration", type=float, default=20.0, help="Evaluation duration in seconds (default: 20.0)")
     parser.add_argument("--drones", type=str, default="10", help="Drone count or spec (default: 10)")
     parser.add_argument("--interval", type=float, default=1.0, help="Main spoofer update interval in seconds (default: 1.0)")
@@ -153,6 +154,8 @@ def main():
         eval_cmd.extend(["--legacy-interval-ms", str(args.legacy_interval_ms)])
     if args.extended_interval_ms is not None:
         eval_cmd.extend(["--extended-interval-ms", str(args.extended_interval_ms)])
+    if args.filter_channels:
+        eval_cmd.extend(["--filter-channel", *map(str, args.filter_channels)])
 
     if args.jam_nice is not None:
         jam_cmd = [
