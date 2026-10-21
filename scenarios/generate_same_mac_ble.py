@@ -8,6 +8,7 @@ import json
 import random
 from pathlib import Path
 
+
 def generate_ble_mac() -> str:
     """Generate a random Static Random Address for BLE advertising (top 2 bits = 11)."""
     parts = [random.randint(0, 255) for _ in range(6)]

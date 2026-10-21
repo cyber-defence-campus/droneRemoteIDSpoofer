@@ -4,6 +4,7 @@ import json
 import random
 from pathlib import Path
 
+
 def generate_ble_mac() -> str:
     """Generate a random Static Random Address for BLE advertising."""
     parts = [random.randint(0, 255) for _ in range(6)]
@@ -30,15 +31,15 @@ def main():
     speed = 10.0
     duration = 120
     lat_scale = 1 / 111320.0
-    
+
     waypoints_1 = []
     waypoints_2 = []
-    
+
     for t in range(duration):
         # Drone 1 goes North (increasing latitude)
         wp_lat_1 = args.lat + (speed * t * lat_scale)
         waypoints_1.append([round(wp_lat_1, 6), round(args.lng, 6), 1])
-        
+
         # Drone 2 goes South (decreasing latitude)
         wp_lat_2 = args.lat - (speed * t * lat_scale)
         waypoints_2.append([round(wp_lat_2, 6), round(args.lng, 6), 1])

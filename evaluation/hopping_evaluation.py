@@ -34,7 +34,6 @@ generates publication-ready comparative visualization figures.
 
 import argparse
 import datetime
-import glob
 import json
 import logging
 import math
@@ -42,14 +41,13 @@ import os
 import random
 import re
 import select
-import shutil
 import socket
 import struct
 import subprocess
 import sys
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 # Ensure repository root and evaluation directory are in sys.path
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -751,7 +749,7 @@ def execute_switch_command(
         t_start = time.perf_counter()
         if sniffer:
             sniffer.set_mock_channel_switch(src_channel, channel, t_start)
-        
+
         # Calibrated against empirical evaluation datasets (mt76x0u_git):
         # - 5G Intra-band: ~159.5 - 160.7 ms (wider UNII-1/3 VCO retuning)
         # - Cross-band 2.4G -> 5.8G: ~155.0 - 155.4 ms (faster than 5G intra-band!)
@@ -917,18 +915,18 @@ def run_transition_benchmark(
         )
         if success:
             cmd_latencies.append(cmd_dur_ms)
-            
+
             if sniffer:
                 time.sleep(packet_sniff_window_s)
                 rf_info = sniffer.analyze_transition_timeline(t_start, t_finish, src_ch, dst_ch)
-                
+
                 # RF Ready
                 if rf_info["rf_detected"] and rf_info["rf_ready_ms"] is not None:
                     rf_ready_latencies.append(rf_info["rf_ready_ms"])
                     if rf_info["rf_lead_time_ms"] is not None:
                         rf_lead_times.append(rf_info["rf_lead_time_ms"])
                     pkts_before_cmd_list.append(rf_info["dst_packets_before_cmd_finish"])
-                
+
                 # Previous Frequency Drain & Blind Spot
                 src_drain_latencies.append(rf_info["src_drain_latency_ms"])
                 src_pkts_after_switch_list.append(rf_info["src_packets_after_switch"])
@@ -1531,7 +1529,6 @@ def generate_evaluation_plots(
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    import numpy as np
     import pandas as pd
     import seaborn as sns
 
@@ -2035,7 +2032,7 @@ def print_summary_report(dataset: Dict[str, Any]):
 
     # 2. Target vs Source Dominance Analysis
     if sens:
-        print(f"\n  ★ TARGET FREQUENCY SENSITIVITY & DOMINANCE ANALYSIS:")
+        print("\n  ★ TARGET FREQUENCY SENSITIVITY & DOMINANCE ANALYSIS:")
         print(f"    - Target Band Shift Effect (Δ_target):   {sens.get('target_band_delta_ms'):.2f} ms  (Tuning TO 5.8G vs TO 2.4G)")
         print(f"    - Source Band Variance (Δ_source):      {sens.get('mean_source_delta_ms'):.2f} ms  (Average origin variation)")
         print(f"    - Target Dominance Ratio:              {sens.get('target_dominance_ratio')}x  (Switching time is {sens.get('target_dominance_ratio')}x more sensitive to destination than origin!)")
@@ -2086,7 +2083,7 @@ def print_summary_report(dataset: Dict[str, Any]):
         print("-" * 88)
 
         if lead_stats.get("count", 0) > 0:
-            print(f"\n  ★ RF HARDWARE LEAD TIME (Command Completion Time - First Packet Arrival Time):")
+            print("\n  ★ RF HARDWARE LEAD TIME (Command Completion Time - First Packet Arrival Time):")
             print(f"    - Mean Lead Time:    {lead_stats.get('mean'):.2f} ms (Packets arrive {lead_stats.get('mean'):.1f} ms BEFORE command finishes!)")
             print(f"    - Median Lead Time:  {lead_stats.get('median'):.2f} ms")
             print(f"    - Max Lead Time:     {lead_stats.get('max'):.2f} ms")
@@ -2095,12 +2092,12 @@ def print_summary_report(dataset: Dict[str, Any]):
     print("\n" + "=" * 88)
     print("  SCANNER HOPPING SEQUENCE CALIBRATION RECOMMENDATIONS")
     print("=" * 88)
-    print(f"  [Option A] Target-Band Calibrated Delays (Optimal for Destination-Driven Radios):")
+    print("  [Option A] Target-Band Calibrated Delays (Optimal for Destination-Driven Radios):")
     print(f"    • Recommended Delay Tuning TO 2.4 GHz:  {recommendations.get('recommended_delay_to_2g_ms')} ms  (p95: {recommendations.get('measured_target_2g_stats', {}).get('p95')} ms + {recommendations.get('safety_margin_ms')} ms margin)")
     print(f"    • Recommended Delay Tuning TO 5.8 GHz:  {recommendations.get('recommended_delay_to_5g_ms')} ms  (p95: {recommendations.get('measured_target_5g_stats', {}).get('p95')} ms + {recommendations.get('safety_margin_ms')} ms margin)")
     print()
     if aggregated.get("total_rf_measurements", 0) > 0:
-        print(f"  [Option B] Asynchronous / Physical RF-Aware Hopper (Packets Captured Immediately):")
+        print("  [Option B] Asynchronous / Physical RF-Aware Hopper (Packets Captured Immediately):")
         print(f"    • Physical Lock Delay TO 2.4 GHz:       {recommendations.get('recommended_rf_delay_to_2g_ms')} ms  (p95: {recommendations.get('measured_rf_target_2g_stats', {}).get('p95')} ms + {recommendations.get('safety_margin_ms')} ms margin)")
         print(f"    • Physical Lock Delay TO 5.8 GHz:       {recommendations.get('recommended_rf_delay_to_5g_ms')} ms  (p95: {recommendations.get('measured_rf_target_5g_stats', {}).get('p95')} ms + {recommendations.get('safety_margin_ms')} ms margin)")
         print()

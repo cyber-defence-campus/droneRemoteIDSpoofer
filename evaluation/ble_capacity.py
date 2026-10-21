@@ -12,12 +12,10 @@ import logging
 import os
 import signal
 import statistics
-import struct
 import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
@@ -25,9 +23,9 @@ import matplotlib.pyplot as plt
 # Add parent directory to path to import drone_rid_spoofer modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from drone_rid_spoofer.spoofer import DroneSpoofer
-from drone_rid_spoofer.transport.ble import BleLegacyBackend, BleExtendedBackend
 from drone_rid_spoofer.helpers import random_location
+from drone_rid_spoofer.spoofer import DroneSpoofer
+from drone_rid_spoofer.transport.ble import BleExtendedBackend, BleLegacyBackend
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -72,12 +70,12 @@ class NrfSnifferThread(threading.Thread):
 
     def run(self):
         self.running = True
-        logger.info(f"Starting NrfSnifferThread via nrf_bt_sniffer_json.py...")
-        
+        logger.info("Starting NrfSnifferThread via nrf_bt_sniffer_json.py...")
+
         # Kill lingering processes to release any held UART port locks
         subprocess.run(["killall", "-9", "nrfutil", "nrfutil-ble-sniffer", "nrfutil-ble-sni"], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
         time.sleep(0.5)
-        
+
         eval_dir = os.path.dirname(os.path.abspath(__file__))
         nrf_script = os.path.join(eval_dir, "nrf_bt_sniffer_json.py")
         cmd = [sys.executable, nrf_script]
@@ -85,9 +83,9 @@ class NrfSnifferThread(threading.Thread):
             cmd.extend(["--nrf-port", self.nrf_port])
         elif self.rx_pcap and os.path.exists(self.rx_pcap):
             cmd.extend(["--rx-pcap", self.rx_pcap])
-            
+
         cmd.append("--only-rid")  # Ensure we only process packets containing valid ASTM Remote ID payload data
-            
+
         # Map sniffer mode to nrf_bt_sniffer_json.py's --ble-mode
         # Note: nrf_bt_sniffer_json.py already adds --coded to nrfutil when in BT5 mode.
         if self.ble_mode in ("ble5", "extended", "pure_bt5", "bt5"):
@@ -101,12 +99,12 @@ class NrfSnifferThread(threading.Thread):
 
         if self.filter_channels:
             cmd.extend(["--filter-channel", *map(str, self.filter_channels)])
-            
+
         try:
             # Redirect stdout to pipe to read stream of JSON lines; stderr remains attached for synchronization messages
             self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=sys.stderr, start_new_session=True)
             self.ready = True
-            
+
             while self.running and self.proc.poll() is None:
                 line = self.proc.stdout.readline()
                 if not line:
@@ -430,7 +428,7 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
                    no_self_id: bool = True, no_operator_id: bool = False,
                    coded_phy: bool = False, print_live: bool = False, optimize_params: bool = True,
                    rx_mode: str = "auto", filter_channels: Optional[List[int]] = None):
-    
+
     # Map legacy transport alias if passed
     mode_map = {
         "pure_bt5": "extended", "bt5": "extended", "ble5": "extended", "extended": "extended",
@@ -533,14 +531,14 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
 
     # Analysis & MAC Correlation using strict Cycle Indexing (preventing bucket jumping on missed deadlines)
     num_buckets = int(round(duration / interval))
-    
+
     mac_to_serial: Dict[str, str] = getattr(backend, 'registered_drones', {})
 
     # Strictly select expected records and tx transmissions belonging to our target evaluation cycles (0 to num_buckets - 1)
     valid_expected = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'expected_records', []) if 0 <= cyc < num_buckets]
     valid_tx = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'tx_records', []) if 0 <= cyc < num_buckets]
 
-    expected_by_mac: Dict[str, int] = {mac: 0 for mac in mac_to_serial.keys()}
+    expected_by_mac: Dict[str, int] = dict.fromkeys(mac_to_serial.keys(), 0)
     msg_type_stats: Dict[str, Dict[str, int]] = {}
 
     def get_stat_dict():
@@ -597,7 +595,7 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
         mac: {"basic_id": 0, "location": 0, "system": 0, "operator_id": 0, "complete_packs": 0, "total_rx": 0}
         for mac in mac_to_serial.keys()
     }
-    
+
     total_complete_packs = 0
     matched_rx_by_mac: Dict[str, List[float]] = {mac: [] for mac in mac_to_serial.keys()}
     propagation_latencies_ms = []
@@ -617,7 +615,7 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
                     msgs = rid.get("parsed_messages", [])
                     for m in msgs:
                         rx_types.append(m.get("type", "Unknown"))
-                        
+
                 # Strictly correlate against an unmatched TX transmission within [-0.05s, +3.0s] window
                 matched_tx = None
                 for tx_item in tx_items_by_mac[mac]:
@@ -625,7 +623,7 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
                         if tx_item["mtype"] in rx_types or tx_item["mtype"] == "Message Pack":
                             matched_tx = tx_item
                             break
-                
+
                 if matched_tx is not None:
                     matched_tx["matched_rx_ts"] = ts_rx
                     matched_rx_by_mac[mac].append(ts_rx)
@@ -822,7 +820,7 @@ def main():
     default_out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ble_capacity_results.json")
     parser.add_argument("--out", type=str, default=default_out, help="Output JSON file (default: evaluation/data/ble_capacity_results.json)")
     parser.add_argument("--append", action="store_true", help="Append/merge new runs into existing output JSON file if it exists")
-    
+
     args = parser.parse_args()
     mode = args.transport if args.transport is not None else args.ble_mode
     drone_counts = parse_drones_spec(args.drones)
@@ -854,8 +852,8 @@ def main():
                     for res in results:
                         matched_idx = -1
                         for idx_item, item in enumerate(merged_list):
-                            if (item.get("drones") == res.get("drones") and 
-                                item.get("ble_mode", item.get("transport")) == res.get("ble_mode", res.get("transport")) and 
+                            if (item.get("drones") == res.get("drones") and
+                                item.get("ble_mode", item.get("transport")) == res.get("ble_mode", res.get("transport")) and
                                 item.get("ble_interval_ms") == res.get("ble_interval_ms") and
                                 item.get("rx_mode") == res.get("rx_mode") and
                                 item.get("rx_channels") == res.get("rx_channels")):
@@ -866,7 +864,7 @@ def main():
                         else:
                             merged_list.append(res)
                     out_payload = merged_list
-            except Exception as e:
+            except Exception:
                 out_payload = results
 
         tmp_out = args.out + ".tmp"
@@ -933,7 +931,7 @@ def main():
     print("-" * 130)
     for r in results:
         print(f"{r['drones']:<10} | {r['expected_packets']:<10} | {r['tx_received_packets']:<12} | {r['rx_received_packets']:<12} | {r['avg_jitter_ms']:<12.2f} | {r.get('avg_build_time_ms', 0):<10.2f} | {r['avg_inject_time_ms']:<10.2f} | {r.get('avg_loop_time_ms', 0):<10.2f} | {r.get('missed_deadlines', 0):<8}")
-    
+
     # Print Per-Drone Payload Breakdown
     for r in results:
         print(f"\n--- Per-Drone Remote ID Payload Breakdown ({r['drones']} Drones) ---")
@@ -941,7 +939,7 @@ def main():
         print("-" * 125)
         for d in r.get("per_drone_stats", []):
             print(f"{d['serial']:<25} | {d['mac']:<18} | {d['expected']:<10} | {d['tx_sent']:<10} | {d['rx_sniffed']:<10} | {d['pdr_percent']:<9.2f}% | {d.get('location_count',0):<9} | {d.get('basic_id_count',0):<11} | {d.get('complete_packs', 0):<12}")
-            
+
         print(f"\n--- ASTM Message Type Delivery Statistics ({r['drones']} Drones) ---")
         print(f"{'Message Type':<18} | {'Expected':<12} | {'TX Sent (HCI)':<15} | {'RX Sniffed (Air)':<18} | {'Delivery Rate (Air)':<18}")
         print("-" * 90)
@@ -956,11 +954,11 @@ def main():
         print(f"\n--- Per-Second Breakdown for {r['drones']} Drones ---")
         print(f"{'Second':<8} | {'Expected':<10} | {'TX Sent':<12} | {'RX Sniffed':<12} | {'Dropped (HCI)':<15} | {'Dropped (Air)':<15}")
         print("-" * 80)
-        
+
         expected = r["per_second_stats"]["expected"]
         tx = r["per_second_stats"]["tx_sniffed"]
         rx = r["per_second_stats"]["rx_sniffed"]
-        
+
         for i in range(len(expected)):
             if expected[i] == 0 and tx[i] == 0 and rx[i] == 0:
                 continue
@@ -979,14 +977,14 @@ def main():
             if times:
                 plt.plot(times, marker='o', label=f"{drones} Drones")
                 has_data = True
-                
+
         if has_data:
             plt.xlabel("Packet Index")
             plt.ylabel("HCI Injection Time (ms)")
             plt.title("BLE HCI Injection Execution Time per Packet")
             plt.legend()
             plt.grid(True)
-            
+
             plot_file = args.out.replace(".json", "_plot.png")
             if not plot_file.endswith(".png"):
                 plot_file += "_plot.png"

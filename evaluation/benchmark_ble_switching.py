@@ -11,7 +11,6 @@ import signal
 import statistics
 import struct
 import subprocess
-import sys
 import threading
 import time
 

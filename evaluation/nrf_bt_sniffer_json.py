@@ -20,6 +20,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+
 def build_pcap_record_header(ts: float, pkt_len: int) -> bytes:
     """Builds a standard 16-byte libpcap packet record header (little-endian)."""
     ts_sec = int(ts)
@@ -448,13 +449,13 @@ def display_mac_stats(
 
     for mac, d in display_macs:
         count_str = str(d["count"])
-        
+
         pdu_items = sorted(d["pdu_types"].items(), key=lambda x: x[1], reverse=True)
         pdu_strs = [f"{p}({c})" for p, c in pdu_items]
         pdu_combined = ", ".join(pdu_strs)
         if len(pdu_combined) > 31:
             pdu_combined = pdu_combined[:28] + "..."
-            
+
         if len(d["transports"]) > 1:
             rid_str = "ble4 + ble5"
         elif d["transports"]:
@@ -463,12 +464,12 @@ def display_mac_stats(
                 rid_str = rid_str[:16]
         else:
             rid_str = "-"
-            
+
         if d["last_rssi"] is not None:
             rssi_str = f"{d['rssi_min']} / {d['rssi_max']} / {d['last_rssi']} dBm"
         else:
             rssi_str = "-"
-            
+
         diff = latest_global_ts - d["last_seen"]
         if 0 <= diff < 3600:
             seen_str = f"{diff:.1f}s ago"
@@ -1011,7 +1012,7 @@ def run_sniffer(
     if filter_channels:
         mac_desc += f" on channel(s) {', '.join(map(str, filter_channels))}"
     output_mode_desc = f"grouped MAC statistics ({stats_format})" if group_by_mac else "JSON stream"
-    
+
     sys.stderr.write(f"[*] Listening and displaying{mode_desc}{mac_desc} as {output_mode_desc}... (Press Ctrl+C to stop)\n\n")
 
     raw_pcap_sock: Optional[socket.socket] = None
@@ -1060,7 +1061,7 @@ def run_sniffer(
                     if group_by_mac and sys.stdout.isatty() and time.time() - last_display_time >= stats_interval and mac_stats:
                         display_mac_stats(stats_format=stats_format, pretty=pretty, clear_screen=True, stream=sys.stdout, is_final=False)
                         last_display_time = time.time()
-                    
+
                     if not nrf_port:
                         # Static PCAP file finished
                         break
@@ -1068,7 +1069,7 @@ def run_sniffer(
                     # Check if controller is still alive
                     if hopper_controller and not hopper_controller.running:
                         break
-                    
+
                     # FIFO closed by sub-process switch; break inner loop to reopen on next PCAP stream
                     break
 

@@ -3,26 +3,23 @@ import argparse
 import json
 import logging
 import os
+import statistics
 import subprocess
 import sys
 import threading
 import time
-import statistics
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 
 # Add parent directory to path to import drone_rid_spoofer
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scapy.all import sniff
 import scapy.layers.dot11 as dot11
 
+from drone_rid_spoofer.helpers import random_location
 from drone_rid_spoofer.spoofer import DroneSpoofer
 from drone_rid_spoofer.transport.wifi import WifiBackend
-from drone_rid_spoofer.helpers import get_random_serial_number, random_location
-from drone_rid_spoofer.messages import MsgType
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -51,54 +48,56 @@ class SnifferThread(threading.Thread):
         self.packets_received: Dict[str, List[float]] = {}
         self.raw_records: List[Dict[str, Any]] = []
         self.lock = threading.Lock()
-        
+
     def run(self):
         self.running = True
         logger.info(f"Starting {self.label} sniffer on {self.iface} for up to {self.duration} seconds...")
-        import socket, struct, select
+        import select
+        import socket
+        import struct
         try:
             sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
             sock.bind((self.iface, 0))
-            
+
             while self.running:
                 ready = select.select([sock], [], [], 0.05)
                 if not ready[0]:
                     continue
-                    
+
                 frame = sock.recv(4096)
                 if len(frame) < 24:
                     continue
-                    
+
                 # Fast check for OUI
                 oui_idx = frame.find(b'\xfa\x0b\xbc')
                 if oui_idx == -1 or oui_idx < 2 or frame[oui_idx - 2] != 0xdd:
                     continue
-                    
+
                 radiotap_len = struct.unpack('<H', frame[2:4])[0]
                 if len(frame) < radiotap_len + 24:
                     continue
-                    
+
                 fc = frame[radiotap_len]
                 if fc != 0x80:  # Not a beacon
                     continue
-                    
+
                 mac_bytes = frame[radiotap_len + 10 : radiotap_len + 16]
                 mac = ':'.join(f'{b:02x}' for b in mac_bytes).upper()
                 ts = time.time()
                 raw_length = len(frame)
-                
+
                 parsed_messages = []
                 ie_len = frame[oui_idx - 1]
                 if oui_idx + 3 + ie_len - 3 <= len(frame):
                     payload_bytes = frame[oui_idx + 3 : oui_idx + 3 + ie_len - 3]
                 else:
                     continue
-                
+
                 if len(payload_bytes) >= 5 and payload_bytes[0] == 0x0D:
                     msg_type_header = (payload_bytes[2] >> 4) & 0x0F
                     msg_size = payload_bytes[3]
                     num_msgs = payload_bytes[4]
-                    
+
                     if msg_type_header == 0x0F and msg_size == 25:
                         offset = 5
                         for _ in range(num_msgs):
@@ -112,7 +111,7 @@ class SnifferThread(threading.Thread):
                                     msg_dict["id"] = id_str
                                 parsed_messages.append(msg_dict)
                                 offset += 25
-                                
+
                 record = {
                     "timestamp": ts,
                     "mac": mac,
@@ -125,7 +124,7 @@ class SnifferThread(threading.Thread):
                         self.packets_received[mac] = []
                     self.packets_received[mac].append(ts)
                     self.raw_records.append(record)
-                    
+
         except Exception as e:
             logger.error(f"Error running sniffer on {self.iface}: {e}")
         finally:
@@ -169,7 +168,7 @@ def instrument_backend(backend: WifiBackend, active_macs: Optional[List[str]] = 
             time.sleep(0.01)
 
         dest_bytes = bytes.fromhex(backend.DEST_ADDR.replace(':', ''))
-        
+
         is_5ghz = backend.channel >= 36
         if is_5ghz:
             supp_rates = b'\x8c\x12\x98\x24'  # 6, 9, 12, 18 Mbps (6, 12 basic)
@@ -187,7 +186,7 @@ def instrument_backend(backend: WifiBackend, active_macs: Optional[List[str]] = 
         ie_erp = dot11.Dot11Elt(ID='ERPinfo', info=b'\x00')
         ie_esr = dot11.Dot11Elt(ID='ESRates', info=ext_rates)
         static_ies_bytes = bytes(ie_rates / ie_dsset / ie_tim / ie_erp / ie_esr)
-        
+
         radiotap_bytes = bytes(dot11.RadioTap(present='Rate', Rate=effective_rate))
 
         next_tick = time.time()
@@ -196,7 +195,7 @@ def instrument_backend(backend: WifiBackend, active_macs: Optional[List[str]] = 
             packets = []
             current_tsf = int(time.time() * 1000000) % (2**64)
             cycle_idx = getattr(backend, 'current_cycle', 0)
-            
+
             # Beacon Base (Timestamp & Cap) is identical for all drones in the same batch
             beacon_base_bytes = bytes(dot11.Dot11Beacon(cap='ESS' if backend.ess else 0, timestamp=current_tsf))
 
@@ -226,21 +225,21 @@ def instrument_backend(backend: WifiBackend, active_macs: Optional[List[str]] = 
 
                 serial_str = serial.decode('ascii', errors='replace') if isinstance(serial, bytes) else str(serial)
                 ssid = (backend.SSID_PREFIX + serial_str)[: backend.SSID_MAX_LEN]
-                
+
                 # 1. Dynamic SSID IE: ID=0, Length, Payload
                 ssid_bytes = ssid.encode('ascii', errors='replace')
                 ie_ssid_bytes = b'\x00' + bytes([len(ssid_bytes)]) + ssid_bytes
-                
+
                 # 2. Dynamic Vendor IE: ID=221 (0xDD), Length, OUI + Payload
                 vendor_info = backend.OUI + vendor_data
                 ie_vendor_bytes = b'\xdd' + bytes([len(vendor_info)]) + vendor_info
-                
+
                 # 3. Dynamic MAC Header: Frame Control (0x8000), Duration (0x0000), Addr1, Addr2, Addr3, Sequence
                 import struct
                 mac_bytes = bytes.fromhex(mac_addr.replace(':', ''))
                 seq_ctrl = (seq_num << 4) & 0xFFFF
                 mac_header_bytes = b'\x80\x00\x00\x00' + dest_bytes + mac_bytes + mac_bytes + struct.pack('<H', seq_ctrl)
-                
+
                 # Construct final raw frame in microseconds
                 frame = radiotap_bytes + mac_header_bytes + beacon_base_bytes + ie_ssid_bytes + static_ies_bytes + ie_vendor_bytes
                 packets.append((mac_addr, frame))
@@ -365,12 +364,12 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
         time.sleep(0.5)
         if time.time() - settled_start >= 2.0 and current_count > 0:
             break
-            
+
     rx_sniffer.running = False
     tx_sniffer.running = False
     rx_sniffer.join(timeout=2.0)
     tx_sniffer.join(timeout=2.0)
-    
+
     actual_duration = t_end - t_start
     if getattr(backend, 'missed_deadlines', 0) > 0:
         logger.debug(f"Tracked {backend.missed_deadlines} missed deadlines.")
@@ -383,7 +382,7 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
     valid_expected = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'expected_records', []) if 0 <= cyc < num_buckets]
     valid_tx = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'tx_records', []) if 0 <= cyc < num_buckets]
 
-    expected_by_mac: Dict[str, int] = {mac: 0 for mac in mac_to_serial.keys()}
+    expected_by_mac: Dict[str, int] = dict.fromkeys(mac_to_serial.keys(), 0)
     msg_type_stats: Dict[str, Dict[str, int]] = {}
 
     def get_stat_dict():
@@ -448,7 +447,7 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
         mac: {"basic_id": 0, "location": 0, "system": 0, "operator_id": 0, "complete_packs": 0, "total_rx": 0}
         for mac in mac_to_serial.keys()
     }
-    
+
     total_complete_packs = 0
     total_air_bytes = 0
     matched_rx_by_mac: Dict[str, List[float]] = {mac: [] for mac in mac_to_serial.keys()}
@@ -466,7 +465,7 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
             msgs = rec.get("parsed_messages", [])
             for m in msgs:
                 rx_types.append(m.get("type", "Unknown"))
-                
+
             # Strictly correlate against an unmatched TX transmission within [-0.05s, +3.0s] window
             matched_tx = None
             for tx_item in tx_items_by_mac[mac]:
@@ -474,7 +473,7 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
                     if tx_item["mtype"] in rx_types or tx_item["mtype"] == "Message Pack":
                         matched_tx = tx_item
                         break
-            
+
             if matched_tx is not None:
                 matched_tx["matched_rx_ts"] = ts_rx
                 matched_rx_by_mac[mac].append(ts_rx)

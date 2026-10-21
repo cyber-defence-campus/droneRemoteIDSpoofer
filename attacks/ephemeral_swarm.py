@@ -6,7 +6,6 @@ rotates MAC addresses, serial numbers, and locations to flood receivers with mas
 numbers of distinct drone sessions across multiple physical transports simultaneously.
 """
 import argparse
-from datetime import datetime
 import logging
 import os
 import sys
@@ -17,18 +16,18 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-from drone_rid_spoofer.cli import create_backends, DEFAULT_LAT, DEFAULT_LNG
+from drone_rid_spoofer.cli import DEFAULT_LAT, DEFAULT_LNG, create_backends
 from drone_rid_spoofer.helpers import (
     ParseLocationAction,
     generate_ble_mac,
     generate_wifi_mac,
     get_random_pilot_location,
     get_random_serial_number,
+    random_altitude,
+    random_height,
     random_location,
     random_speed,
     random_vertical_speed,
-    random_altitude,
-    random_height,
 )
 from drone_rid_spoofer.messages import build_all_messages
 from drone_rid_spoofer.state import DroneState
