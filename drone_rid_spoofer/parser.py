@@ -238,19 +238,28 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
             ew_dir = (b1 >> 1) & 0x01
             speed_mult = b1 & 0x01
 
+            # Direction: 0-179 encoded directly (E/W bit clear), 180-360 as value-180 with E/W bit
+            # set. 361 (raw 181, E/W set) is the spec's "unknown" value. Off-spec encodings are
+            # decoded anyway (> 360 normalized into 0-359) rather than discarded.
             dir_raw = block[2]
             direction_deg = dir_raw + 180 if ew_dir else dir_raw
-            if direction_deg > 360:
+            if direction_deg == 361:
                 direction_deg = None
+            elif direction_deg > 360:
+                direction_deg %= 360
 
+            # Horizontal speed: unknown (255 m/s) encodes as raw 255 with the multiplier bit set.
+            # Raw 255 without the multiplier is a valid 63.75 m/s.
             speed_raw = block[3]
-            if speed_raw == 255 and speed_mult == 0:
+            if speed_raw == 255 and speed_mult == 1:
                 speed_mps = None
             else:
                 speed_mps = (speed_raw * 0.25) if speed_mult == 0 else (63.75 + speed_raw * 0.75)
 
+            # Vertical speed: 0.5 m/s steps, valid range +/-62 m/s (raw +/-124).
+            # Unknown (63 m/s) encodes as raw 126; anything beyond +/-124 is out of spec.
             v_speed_raw = struct.unpack('<b', block[4:5])[0]
-            v_speed_mps = None if v_speed_raw == 63 else (v_speed_raw * 0.5)
+            v_speed_mps = None if abs(v_speed_raw) > 124 else (v_speed_raw * 0.5)
 
             lat_raw = struct.unpack('<i', block[5:9])[0]
             lon_raw = struct.unpack('<i', block[9:13])[0]
