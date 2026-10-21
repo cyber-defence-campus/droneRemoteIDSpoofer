@@ -34,6 +34,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "build>=1.0.0",
+    "ruff>=0.17",
 ]
 
 [project.scripts]
@@ -57,3 +58,34 @@ exclude = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 norecursedirs = ["scratch", ".venv", "build", "dist"]
+
+[tool.ruff]
+# Lint the installed packages plus the research/eval helpers; leave generated
+# and vendored trees alone.
+target-version = "py39"
+line-length = 100
+extend-exclude = [
+    "NaN",
+    "NaN_Bridge",
+    "patches",
+    "resources",
+    "scratch",
+    "central_logs",
+    "spool",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# A pragmatic core: pyflakes (F) catches real bugs, pycodestyle (E/W) the
+# obvious style slips, plus isort (I), flake8-bugbear (B) and
+# flake8-comprehensions (C4). Keep it green, then tighten later if wanted
+# (e.g. add "UP" for pyupgrade once the py39 floor is raised).
+select = ["E", "F", "W", "I", "B", "C4"]
+ignore = [
+    "E501",    # line too long — handled by the formatter, not enforced here
+    "B008",    # function call in argument default (argparse actions use this)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports
