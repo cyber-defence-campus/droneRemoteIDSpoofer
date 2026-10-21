@@ -252,7 +252,6 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
         return res
     backend._set_advertising_enable = patched_set_adv_enable
 
-    orig_transmit_loop = backend._transmit_loop
     def patched_transmit_loop():
         while backend._running:
             if not backend._sock:
@@ -876,7 +875,6 @@ def main():
             with open(args.out, 'w') as f:
                 json.dump(out_payload, f, indent=4)
 
-    interrupted = False
     try:
         for idx, count in enumerate(drone_counts):
             res = run_experiment(
@@ -919,7 +917,6 @@ def main():
                 time.sleep(5.0)
     except KeyboardInterrupt:
         logger.warning("\n[!] Sweep interrupted by user. Saving collected progress so far...")
-        interrupted = True
         flush_results_to_disk()
 
     flush_results_to_disk()

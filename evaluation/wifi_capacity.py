@@ -590,7 +590,6 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
         "iat_stats_ms": iat_stats,
         "propagation_latency_stats_ms": propagation_stats,
         "missed_deadlines": backend.missed_deadlines,
-        "msg_type_stats": msg_type_stats,
         "inject_times_ms": [t * 1000 for t in backend.inject_times] if hasattr(backend, 'inject_times') else [],
         "per_cycle_stats": {
             "cycle_interval_s": interval,

@@ -72,10 +72,10 @@ def run_benchmark(
 
         # 3. Read FIFO in thread
         read_meta = {}
-        def reader():
+        def reader(read_meta=read_meta):
             try:
                 with open(fifo_path, "rb") as f:
-                    hdr = f.read(24)
+                    f.read(24) #header
                     read_meta["t_hdr"] = time.perf_counter()
                     pkthdr = f.read(16)
                     read_meta["t_pkt"] = time.perf_counter()

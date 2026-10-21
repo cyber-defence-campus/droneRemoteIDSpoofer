@@ -79,7 +79,6 @@ class DroneSpoofer:
         self._run_manual_control_loop(drone)
 
     def _run_manual_control_loop(self, drone: DroneState) -> None:
-        next_send = datetime.now()
         stdin_fd = sys.stdin.fileno()
         original_settings = termios.tcgetattr(stdin_fd)
 

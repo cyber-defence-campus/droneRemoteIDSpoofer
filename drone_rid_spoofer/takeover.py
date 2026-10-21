@@ -188,7 +188,8 @@ class TakeoverSpoofer:
         try:
             self.ble_sock.send(self._build_hci_command(0x2042, struct.pack("<BB", 0x00, 0x00)))
             self.ble_sock.send(self._build_hci_command(0x200C, struct.pack("<BB", 0x00, 0x00)))
-        except: pass
+        except Exception:
+            pass
         self.ble_sock.close()
 
     def _process_ad_data_ble(self, addr: bytes, data: bytes, is_legacy=False):

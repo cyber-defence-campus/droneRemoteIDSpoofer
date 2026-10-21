@@ -17,7 +17,7 @@ def parse_location(latitude: str, longitude: str) -> Tuple[int, int]:
         lat = float(latitude)
         lng = float(longitude)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"Invalid coordinate format: {latitude}, {longitude}")
+        raise argparse.ArgumentTypeError(f"Invalid coordinate format: {latitude}, {longitude}") from None
 
     if not (-90 < lat < 90):
         raise argparse.ArgumentTypeError(f"Latitude must be between -90 and 90, got: {lat}")

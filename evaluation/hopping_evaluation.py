@@ -1183,7 +1183,6 @@ def run_comprehensive_benchmark(
     for method in methods:
         for src_ch, dst_ch, desc in transitions:
             curr += 1
-            cat = get_transition_category(src_ch, dst_ch)
             logger.info(f"  [{curr}/{total_tests}] [{method}] {desc} ({src_ch} -> {dst_ch})...")
             res = run_transition_benchmark(
                 iface, src_ch, dst_ch, iterations, method=method,
@@ -1308,7 +1307,7 @@ def aggregate_benchmark_results(
             method_groups[method] = []
         method_groups[method].extend(raw_cmd)
 
-        def add_to_group(grp_name):
+        def add_to_group(grp_name, raw_cmd=raw_cmd, raw_rf=raw_rf, raw_drain=raw_drain, raw_blind=raw_blind):
             categories[grp_name].extend(raw_cmd)
             rf_categories[grp_name].extend(raw_rf)
             drain_categories[grp_name].extend(raw_drain)
@@ -1937,9 +1936,6 @@ def generate_evaluation_plots(
 
     # Panel D: Recommendations Card
     axes[1, 1].axis('off')
-    lead_stats = recommendations.get("rf_lead_time_stats", {})
-    drain_intra = recommendations.get("measured_drain_intra_stats", {})
-    blind_intra = recommendations.get("measured_blind_spot_intra_stats", {})
     sens = recommendations.get("sensitivity_analysis", {})
     rec_text = (
         f"CALIBRATION RECOMMENDATIONS FOR SCANNER\n"
@@ -2087,6 +2083,30 @@ def print_summary_report(dataset: Dict[str, Any]):
             print(f"    - Mean Lead Time:    {lead_stats.get('mean'):.2f} ms (Packets arrive {lead_stats.get('mean'):.1f} ms BEFORE command finishes!)")
             print(f"    - Median Lead Time:  {lead_stats.get('median'):.2f} ms")
             print(f"    - Max Lead Time:     {lead_stats.get('max'):.2f} ms")
+
+    # 6. Per-Target-Channel Switch Latency
+    if any(st.get("count", 0) > 0 for st in target_ch_stats.values()):
+        print("\n5. Per-Target-Channel Switch Latency (grouped by destination channel):")
+        print(f"{'Target Channel':<32} {'Count':>6} {'Mean (ms)':>10} {'Median':>8} {'p95':>8} {'p99':>8} {'Max':>8}")
+        print("-" * 88)
+
+        def _ch_sort_key(name: str):
+            # Keys are "ch_<n>"; sort numerically, pushing any non-numeric key to the end
+            suffix = name.split("_", 1)[-1]
+            return (0, int(suffix)) if suffix.isdigit() else (1, 0)
+
+        for k in sorted(target_ch_stats, key=_ch_sort_key):
+            st = target_ch_stats.get(k, {})
+            if st.get("count", 0) <= 0:
+                continue
+            suffix = k.split("_", 1)[-1]
+            label = f"Channel {suffix} ({get_wifi_band(int(suffix))})" if suffix.isdigit() else k
+            print(
+                f"{label:<32} {st.get('count', 0):>6} {st.get('mean', 0.0):>10.2f} "
+                f"{st.get('median', 0.0):>8.2f} {st.get('p95', 0.0):>8.2f} "
+                f"{st.get('p99', 0.0):>8.2f} {st.get('max', 0.0):>8.2f}"
+            )
+        print("-" * 88)
 
     # Recommendations
     print("\n" + "=" * 88)
