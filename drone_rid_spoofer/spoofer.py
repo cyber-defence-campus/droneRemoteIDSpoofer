@@ -141,8 +141,15 @@ class DroneSpoofer:
         drones = []
         base_lat, base_lng = self.base_location
 
+        # A custom --serial applies to the first drone; the rest stay random so
+        # a serial and --random N > 1 don't produce duplicate identifiers.
+        custom_serial = getattr(self.args, "serial", None)
+
         for i in range(count):
-            serial = get_random_serial_number()
+            if i == 0 and custom_serial:
+                serial = custom_serial.encode()
+            else:
+                serial = get_random_serial_number()
             lat, lng = random_location(base_lat, base_lng, 50000)
             pilot_loc = get_random_pilot_location(lat, lng)
             mac_addr = generate_wifi_mac()
