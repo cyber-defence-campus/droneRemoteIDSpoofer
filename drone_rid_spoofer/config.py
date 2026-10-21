@@ -56,6 +56,21 @@ class SpooferConfig:
     no_self_id: bool
     no_operator_id: bool
     drones_config: List[dict] = field(default_factory=list)
+    # Single-drone overrides (CLI-only; applied to the first/only drone when no
+    # scenario drones[] array is given). None means "leave to the random default".
+    mac: Optional[str] = None
+    ble_mac: Optional[str] = None
+    operator_id: Optional[str] = None
+    description: Optional[str] = None
+    lifespan: Optional[float] = None
+    static: Optional[bool] = None
+    pilot_location: Optional[Tuple[int, int]] = None
+    timestamp_offset: Optional[float] = None
+    speed: Optional[float] = None
+    vertical_speed: Optional[float] = None
+    geodetic_altitude: Optional[float] = None
+    pressure_altitude: Optional[float] = None
+    height: Optional[float] = None
     # BLE
     ble_adapter: str = "hci0"
     ble_interval: int = 100
@@ -115,6 +130,19 @@ class SpooferConfig:
             nan_cluster_id=str(_resolve(
                 args.nan_cluster_id, nan, "cluster_id", "50:6f:9a:01:00:00")),
             nan_instance_id=cls._resolve_instance_id(args.nan_instance_id, nan),
+            mac=getattr(args, "mac", None),
+            ble_mac=getattr(args, "ble_mac", None),
+            operator_id=getattr(args, "operator_id", None),
+            description=getattr(args, "description", None),
+            lifespan=getattr(args, "lifespan", None),
+            static=getattr(args, "static", None),
+            pilot_location=getattr(args, "pilot_location", None),
+            timestamp_offset=getattr(args, "timestamp_offset", None),
+            speed=getattr(args, "speed", None),
+            vertical_speed=getattr(args, "vertical_speed", None),
+            geodetic_altitude=getattr(args, "geodetic_altitude", None),
+            pressure_altitude=getattr(args, "pressure_altitude", None),
+            height=getattr(args, "height", None),
         )
 
     @staticmethod

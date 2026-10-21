@@ -215,6 +215,26 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | | `--nan-cluster-id` | `str` | `50:6f:9a:01:00:00` | NAN Cluster BSSID MAC for manual injection |
 | | `--nan-instance-id` | `int/hex` | `0x10` | NAN Service Instance ID for manual injection |
 
+**Single-drone overrides** (applied to the drone in manual mode, or the first drone in automatic mode; the remaining random drones are unaffected). These let you fully configure one drone from the CLI without a scenario JSON:
+
+| Flag | Parameter | Default | Description |
+|------|-----------|---------|-------------|
+| `--mac` | `str` | random LAA | Wi-Fi MAC address |
+| `--ble-mac` | `str` | random static-random | BLE advertising address |
+| `--operator` | `str` | none | Operator ID (max 20 chars) |
+| `--description` | `str` | none | Self-ID text description (max 23 chars) |
+| `--lifespan` | `float` | `0` (forever) | Seconds before the drone stops transmitting |
+| `--static` | - | - | Keep the drone stationary (no random drift) |
+| `--pilot-location` | `lat lng` | near drone | Pilot/operator coordinates (decimal degrees) |
+| `--timestamp-offset` | `float` | `0` | Minutes to shift the ASTM timestamp (negative = past) |
+| `--speed` | `float` | random | Horizontal speed (m/s) |
+| `--vertical-speed` | `float` | random | Vertical speed (m/s, + = climbing) |
+| `--geodetic-altitude` | `float` | random | Geodetic altitude (m MSL) |
+| `--pressure-altitude` | `float` | tracks geodetic | Pressure altitude (m MSL) |
+| `--height` | `float` | random | Height above takeoff (m) |
+
+For multiple precisely-configured drones, per-drone arrays, or waypoint flight paths, use a scenario JSON ([CONFIG.md](CONFIG.md)).
+
 CLI flags override values from scenario config files.
 
 ---

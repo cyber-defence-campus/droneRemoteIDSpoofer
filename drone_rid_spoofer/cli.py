@@ -95,10 +95,55 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nan-instance-id", type=lambda x: int(x, 0), default=None,
                         help="Transmitted Service Instance ID byte for manual injection mode (default: 0x10)")
 
+    # Single-drone overrides. Applied to the one drone in manual mode and to the
+    # first drone in automatic mode; the remaining random drones are unaffected.
+    # Multi-drone precise scenarios (per-drone arrays, waypoints) stay JSON-only.
+    drone = parser.add_argument_group(
+        "single-drone overrides",
+        "Configure the (first) drone's identity and kinematics without a scenario "
+        "JSON. Ignored for the random drones beyond the first in automatic mode.")
+    drone.add_argument("--mac", type=str, default=None,
+                       help="Wi-Fi MAC address for the drone (default: random LAA)")
+    drone.add_argument("--ble-mac", type=str, default=None,
+                       help="BLE advertising address for the drone (default: random static-random)")
+    drone.add_argument("--operator", dest="operator_id", type=str, default=None,
+                       help="Operator ID string, max 20 chars (default: none)")
+    drone.add_argument("--description", dest="description", type=str, default=None,
+                       help="Self-ID text description, max 23 chars (default: none)")
+    drone.add_argument("--lifespan", dest="lifespan", type=float, default=None,
+                       help="Seconds before the drone stops transmitting (default: 0 = forever)")
+    drone.add_argument("--static", dest="static", action="store_true", default=None,
+                       help="Keep the drone stationary instead of drifting randomly")
+    drone.add_argument("--pilot-location", dest="pilot_location", nargs=2,
+                       metavar=("LATITUDE", "LONGITUDE"),
+                       action=ParseLocationAction,
+                       help="Pilot/operator coordinates (decimal degrees; default: near the drone)")
+    drone.add_argument("--timestamp-offset", dest="timestamp_offset", type=float, default=None,
+                       help="Minutes to shift the ASTM timestamp (negative = past; default: 0)")
+    drone.add_argument("--speed", dest="speed", type=float, default=None,
+                       help="Horizontal speed in m/s (default: random)")
+    drone.add_argument("--vertical-speed", dest="vertical_speed", type=float, default=None,
+                       help="Vertical speed in m/s, positive = climbing (default: random)")
+    drone.add_argument("--geodetic-altitude", dest="geodetic_altitude", type=float, default=None,
+                       help="Geodetic altitude in meters MSL (default: random)")
+    drone.add_argument("--pressure-altitude", dest="pressure_altitude", type=float, default=None,
+                       help="Pressure altitude in meters MSL (default: tracks geodetic)")
+    drone.add_argument("--height", dest="height", type=float, default=None,
+                       help="Height above takeoff in meters (default: random)")
+
     args = parser.parse_args()
 
     if args.serial and len(args.serial) > 20:
         parser.error("Serial number must be 20 characters or less")
+
+    if args.operator_id and len(args.operator_id) > 20:
+        parser.error("Operator ID must be 20 characters or less")
+
+    if args.description and len(args.description) > 23:
+        parser.error("Self-ID description must be 23 characters or less")
+
+    if args.lifespan is not None and args.lifespan < 0:
+        parser.error("Lifespan must be non-negative")
 
     if args.random is not None and args.random < 1:
         parser.error("Number of random drones must be at least 1")

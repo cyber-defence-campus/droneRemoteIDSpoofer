@@ -54,14 +54,26 @@ class DroneSpoofer:
         """Run controlled drone spoofing with keyboard input."""
         logger.info("Starting MANUAL MODE - Use WASD to control drone movement")
 
+        overrides = self._cli_overrides()
         serial = self.args.serial.encode() if self.args.serial else get_random_serial_number()
         lat, lng = random_location(*self.args.location, 10000)
-        pilot_loc = get_random_pilot_location(lat, lng)
-        mac_addr = generate_wifi_mac()
-        ble_addr = generate_ble_mac()
+        pilot_loc = overrides.get("pilot_location") or get_random_pilot_location(lat, lng)
+        mac_addr = overrides.get("mac") or generate_wifi_mac()
+        ble_addr = overrides.get("ble_mac") or generate_ble_mac()
 
-        drone = DroneState(serial, pilot_loc, lat, lng, mac_addr, ble_addr)
-        self._seed_kinematics(drone)
+        drone = DroneState(
+            serial=serial,
+            pilot_location=pilot_loc,
+            lat=lat,
+            lng=lng,
+            mac_address=mac_addr,
+            ble_address=ble_addr,
+            lifespan_seconds=float(overrides.get("lifespan", 0.0)),
+            timestamp_offset=float(overrides.get("timestamp_offset", 0.0)),
+            description=overrides.get("description"),
+            operator_id=overrides.get("operator_id"),
+        )
+        self._seed_kinematics(drone, overrides=self._extract_kinematic_overrides(overrides))
         logger.info(f"Drone {serial.decode()} created at [{lat}, {lng}] with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr}")
 
         self._run_manual_control_loop(drone)
@@ -137,26 +149,55 @@ class DroneSpoofer:
 
         self._run_automatic_loop(drones)
 
+    def _cli_overrides(self) -> dict:
+        """Collect the single-drone CLI overrides that were actually given.
+
+        Only keys whose flag was passed (non-None) appear, so callers can treat
+        the dict as "apply these, leave everything else random".
+        """
+        keys = ("mac", "ble_mac", "operator_id", "description", "lifespan",
+                "static", "pilot_location", "timestamp_offset", "speed",
+                "vertical_speed", "geodetic_altitude", "pressure_altitude",
+                "height")
+        return {k: getattr(self.args, k) for k in keys
+                if getattr(self.args, k, None) is not None}
+
     def _create_drones(self, count: int) -> List[DroneState]:
         drones = []
         base_lat, base_lng = self.base_location
 
-        # A custom --serial applies to the first drone; the rest stay random so
-        # a serial and --random N > 1 don't produce duplicate identifiers.
+        # A custom --serial and the other --mac/--operator/... overrides apply to
+        # the first drone only; the rest stay fully random so a single override
+        # and --random N > 1 don't produce duplicate identifiers.
         custom_serial = getattr(self.args, "serial", None)
+        overrides = self._cli_overrides()
 
         for i in range(count):
+            apply = overrides if i == 0 else {}
+
             if i == 0 and custom_serial:
                 serial = custom_serial.encode()
             else:
                 serial = get_random_serial_number()
             lat, lng = random_location(base_lat, base_lng, 50000)
-            pilot_loc = get_random_pilot_location(lat, lng)
-            mac_addr = generate_wifi_mac()
-            ble_addr = generate_ble_mac()
+            pilot_loc = apply.get("pilot_location") or get_random_pilot_location(lat, lng)
+            mac_addr = apply.get("mac") or generate_wifi_mac()
+            ble_addr = apply.get("ble_mac") or generate_ble_mac()
 
-            drone = DroneState(serial, pilot_loc, lat, lng, mac_addr, ble_addr)
-            self._seed_kinematics(drone)
+            drone = DroneState(
+                serial=serial,
+                pilot_location=pilot_loc,
+                lat=lat,
+                lng=lng,
+                mac_address=mac_addr,
+                ble_address=ble_addr,
+                mode="static" if apply.get("static") else "random",
+                lifespan_seconds=float(apply.get("lifespan", 0.0)),
+                timestamp_offset=float(apply.get("timestamp_offset", 0.0)),
+                description=apply.get("description"),
+                operator_id=apply.get("operator_id"),
+            )
+            self._seed_kinematics(drone, overrides=self._extract_kinematic_overrides(apply))
             drones.append(drone)
             logger.info(f"Drone {serial.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr}")
 

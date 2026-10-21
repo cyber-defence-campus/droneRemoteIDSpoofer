@@ -39,7 +39,10 @@ _drone_spoofer_completions() {
 -n --interval -l --location -c --config -v --verbose -t --transport \
 --ble-adapter --ble-interval --ble-extended-interval --ble-mode \
 --wifi-ess --no-self-id --no-operator-id --wifi-channel --wifi-beacon-interval \
---nan-port --nan-mode --nan-cluster-id --nan-instance-id -h --help"
+--nan-port --nan-mode --nan-cluster-id --nan-instance-id \
+--mac --ble-mac --operator --description --lifespan --static --pilot-location \
+--timestamp-offset --speed --vertical-speed --geodetic-altitude \
+--pressure-altitude --height -h --help"
 
     local channels="1 2 3 4 5 6 7 8 9 10 11 12 13 36 40 44 48 149 153 157 161 165"
 
