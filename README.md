@@ -42,6 +42,8 @@ source .venv/bin/activate
 pip install -e .          # add [dev] for pytest/build tooling
 ```
 
+This installs the package and its dependencies into the venv and creates the `drone-spoofer` command at `.venv/bin/drone-spoofer` (used in the examples below).
+
 > **Tip — tab-completion**
 >
 > Install bash completion for the `drone-spoofer` command (interface names after
@@ -62,7 +64,7 @@ pip install -e .          # add [dev] for pytest/build tooling
 **Wi-Fi** — just point the spoofer at your adapter; it configures monitor mode
 (on the target channel) itself and restores managed mode on exit:
 ```bash
-sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
+sudo .venv/bin/drone-spoofer -i <interface-name>
 ```
 
 > **Important — Legal Compliance & Wi-Fi Regulatory Domain**
@@ -81,12 +83,12 @@ sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
 ```bash
 sudo rfkill unblock all
 sudo hciconfig hci0 up
-sudo .venv/bin/python3 spoof_drones.py -t ble --ble-adapter hci0
+sudo .venv/bin/drone-spoofer -t ble --ble-adapter hci0
 ```
 
 **Both at once:**
 ```bash
-sudo .venv/bin/python3 spoof_drones.py -i wlan1 -t both --ble-adapter hci0
+sudo .venv/bin/drone-spoofer -i wlan1 -t both --ble-adapter hci0
 ```
 
 **Wi-Fi NAN (Wi-Fi Aware):**
@@ -94,7 +96,7 @@ sudo .venv/bin/python3 spoof_drones.py -i wlan1 -t both --ble-adapter hci0
 *Option A — Direct Linux Raw Packet Injection (Manual Mode - No Android device required):*
 Injects IEEE 802.11 Wi-Fi Aware Action Frames and Discovery Beacons directly from a monitor mode interface:
 ```bash
-sudo .venv/bin/python3 spoof_drones.py -t nan --nan-mode manual -i wlan1
+sudo .venv/bin/drone-spoofer -t nan --nan-mode manual -i wlan1
 ```
 
 *Option B — Android Bridge App (Bridge Mode):*
@@ -105,7 +107,7 @@ adb forward tcp:8080 tcp:8080
 ```
 3. Run the spoofer with `nan` transport in bridge mode:
 ```bash
-python3 spoof_drones.py -t nan --nan-mode bridge --nan-port 8080
+.venv/bin/drone-spoofer -t nan --nan-mode bridge --nan-port 8080
 ```
 
 You should see the spoofed drone appear on any RID receiver within range.
@@ -125,32 +127,32 @@ You should see the spoofed drone appear on any RID receiver within range.
 ### Scenario file
 
 ```bash
-sudo python3 spoof_drones.py -c scenarios/single_random.json
+sudo .venv/bin/drone-spoofer -c scenarios/single_random.json
 ```
 
 ### Drone swarm (5 drones)
 
 ```bash
-sudo python3 spoof_drones.py -i wlan1 -r 5
+sudo .venv/bin/drone-spoofer -i wlan1 -r 5
 ```
 
 ### Manual keyboard control
 
 ```bash
-sudo python3 spoof_drones.py -i wlan1 -m
+sudo .venv/bin/drone-spoofer -i wlan1 -m
 ```
 Use **W/A/S/D** to fly north/west/south/east, **Ctrl+C** to stop.
 
 ### Waypoint flight path
 
 ```bash
-sudo python3 spoof_drones.py -c scenarios/flight_path.json
+sudo .venv/bin/drone-spoofer -c scenarios/flight_path.json
 ```
 
 ### Stress test (20 drones)
 
 ```bash
-sudo python3 spoof_drones.py -c scenarios/stress_test.json
+sudo .venv/bin/drone-spoofer -c scenarios/stress_test.json
 ```
 
 See the `scenarios/` directory for all ready-to-use configs, or create your own — full reference in [CONFIG.md](CONFIG.md).
@@ -241,7 +243,7 @@ CLI flags override values from scenario config files.
 
 ## Advanced Security Research & Evaluation Suite
 
-In addition to `spoof_drones.py`, the repository includes specialized security evaluation, fuzzing, scanning, and takeover modules:
+In addition to the `drone-spoofer` CLI, the repository includes specialized security evaluation, fuzzing, scanning, and takeover modules:
 
 - **Capacity & RF Benchmarking Suite (`evaluation/`)**: Automated multi-mode benchmark orchestrator (`run_ble_benchmark.py`), Wi-Fi capacity tester (`wifi_capacity.py`), and BLE capacity tester (`ble_capacity.py`) with unified plotting engine (`plot_capacity.py`, `plot_ble_comparisons.py`). See [evaluation/README.md](evaluation/README.md).
 - **Offensive Security Attacks & Exploit Verification (`attacks/`)**: Comprehensive suite containing real-time drone session takeover (`attacks/takeover/`), EASA registration checksum collision solver (`attacks/protocol/`), ephemeral swarm identity flood (`attacks/ephemeral_swarm.py`), and OTA protocol mutation fuzzer (`attacks/fuzz_rid.py`). See [attacks/README.md](attacks/README.md).

@@ -1,6 +1,6 @@
 # Scenario Config
 
-This document describes the JSON scenario file used by `spoof_drones.py`.
+This document describes the JSON scenario file used by the `drone-spoofer` CLI.
 
 Note that CLI flags override config values.
 

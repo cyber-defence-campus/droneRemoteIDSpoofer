@@ -18,19 +18,19 @@ Test standard Remote ID broadcast compliance across all physical mediums using e
 ### Commands:
 ```bash
 # Wi-Fi Beacon (1 drone, realistic location)
-sudo .venv/bin/python3 spoof_drones.py -t wifi -i wlan1 -r 1 -l 47.376340 8.531256
+sudo .venv/bin/drone-spoofer -t wifi -i wlan1 -r 1 -l 47.376340 8.531256
 
 # BLE 5 Extended Advertising (5 drones, realistic location)
-sudo .venv/bin/python3 spoof_drones.py -t ble --ble-adapter hci0 -r 5 -l 47.376340 8.531256
+sudo .venv/bin/drone-spoofer -t ble --ble-adapter hci0 -r 5 -l 47.376340 8.531256
 
 # BLE 4 Legacy Advertising (5 drones, via Extended HCI for modern adapters)
-sudo .venv/bin/python3 spoof_drones.py -t ble --ble-mode ext-legacy -r 5 -l 34.0522 -118.2437
+sudo .venv/bin/drone-spoofer -t ble --ble-mode ext-legacy -r 5 -l 34.0522 -118.2437
 
 # Wi-Fi NAN / Android Bridge (5 drones, realistic location)
-sudo .venv/bin/python3 spoof_drones.py -t nan --nan-port 8080 -r 5 -l 47.376340 8.531256
+sudo .venv/bin/drone-spoofer -t nan --nan-port 8080 -r 5 -l 47.376340 8.531256
 
 # All Transports simultaneously (Wi-Fi + BLE 5 + NAN)
-sudo .venv/bin/python3 spoof_drones.py -t all -r 5 -l 47.376340 8.531256
+sudo .venv/bin/drone-spoofer -t all -r 5 -l 47.376340 8.531256
 ```
 
 ---
@@ -41,10 +41,10 @@ Evaluate receiver performance and RF capacity limits by generating a dense swarm
 ### Commands:
 ```bash
 # Spawn 200 drones on Wi-Fi Beacon (with Self ID included)
-sudo .venv/bin/python3 spoof_drones.py -t wifi -i wlan1 -r 200 -l 47.376340 8.531256
+sudo .venv/bin/drone-spoofer -t wifi -i wlan1 -r 200 -l 47.376340 8.531256
 
 # Optimized Swarm: Omit Self ID message (--no-self-id) to reduce frame airtime and maximize packet delivery
-sudo .venv/bin/python3 spoof_drones.py -t wifi -i wlan1 -r 200 -l 47.376340 8.531256 --no-self-id
+sudo .venv/bin/drone-spoofer -t wifi -i wlan1 -r 200 -l 47.376340 8.531256 --no-self-id
 ```
 
 ---
@@ -60,16 +60,16 @@ python3 scenarios/generate_same_mac.py --lat 47.376340 --lng 8.531256
 ### Step 2: Execute the scenario across different transports (excluding Wi-Fi NAN):
 ```bash
 # Execute on Wi-Fi Beacon
-sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t wifi -i wlan1
+sudo .venv/bin/drone-spoofer -c scenarios/same_mac.json -t wifi -i wlan1
 
 # Execute on BLE 5 Extended Advertising
-sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t ble --ble-adapter hci0
+sudo .venv/bin/drone-spoofer -c scenarios/same_mac.json -t ble --ble-adapter hci0
 
 # Execute on BLE 4 Legacy Advertising (via Extended HCI)
-sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t ble --ble-mode ext-legacy
+sudo .venv/bin/drone-spoofer -c scenarios/same_mac.json -t ble --ble-mode ext-legacy
 
 # Execute on both Wi-Fi and BLE 5 simultaneously
-sudo .venv/bin/python3 spoof_drones.py -c scenarios/same_mac.json -t both
+sudo .venv/bin/drone-spoofer -c scenarios/same_mac.json -t both
 ```
 
 ### Potential Step 3: Modify the scenario to use the same Basic ID across drones
