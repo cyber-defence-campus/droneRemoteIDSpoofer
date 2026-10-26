@@ -76,7 +76,7 @@ def stop_child_proc(proc, name="process", timeout=3.0):
 def main():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     default_venv_python = os.path.join(repo_root, ".venv", "bin", "python")
-    default_jam_script = os.path.expanduser("/home/davidalexander/blejam.py")
+    default_jam_script = os.path.expanduser("~/blejam.py")
 
     parser = argparse.ArgumentParser(description="Run BLE Capacity Evaluation and trigger GNU Radio Jammer after a delay")
     parser.add_argument("--tx-adapter", default="hci0", help="Transmit Bluetooth HCI adapter (default: hci0)")

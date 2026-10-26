@@ -607,6 +607,23 @@ def locate_ble_packet(data: bytes) -> Tuple[int, int, Optional[int], Optional[in
     return aa_idx, pdu_offset, rf_channel, rssi_dbm
 
 
+def extract_crc_ok(data: bytes) -> Optional[bool]:
+    """
+    Extract the CRC-OK flag from the Nordic DLT 272 header.
+
+    The Nordic nRF Sniffer pseudo-header carries a Flags byte (at data[aa_idx - 9],
+    the same byte whose bits 4-6 encode the PHY) whose bit 0 is set when the captured
+    PDU passed its CRC check. Unlike an HCI controller, the sniffer forwards PDUs that
+    failed CRC, so this flag is what distinguishes an intact capture from a corrupted
+    one. Returns True (CRC passed), False (CRC failed), or None if the header is too
+    short to locate the flag.
+    """
+    aa_idx, _, _, _ = locate_ble_packet(data)
+    if aa_idx < 9:
+        return None
+    return bool(data[aa_idx - 9] & 0x01)
+
+
 def parse_packet_metadata(data: bytes) -> Tuple[str, str, Optional[int], Optional[int]]:
     """
     Extracts PDU type, Advertiser MAC address (AdvA), RSSI (dBm), and RF Channel from an nRF Sniffer packet.
@@ -917,6 +934,7 @@ def process_packet(
         "rf_channel": rf_channel,
         "primary_rf_channel": primary_channel,
         "rssi_dbm": rssi_dbm,
+        "crc_ok": extract_crc_ok(data),
         "raw_length": len(data),
         "raw_hex": data.hex().upper(),
         "remote_id": remote_id_info,
@@ -1169,7 +1187,7 @@ def main():
     )
     parser.add_argument(
         "-m", "--filter-mac",
-        help="Filter captured packets by advertiser MAC address (case-insensitive, e.g. 3c:dc:75:9b:1e:d6)"
+        help="Filter captured packets by advertiser MAC address (case-insensitive, e.g. AA:BB:CC:DD:EE:FF)"
     )
     parser.add_argument(
         "-c", "--filter-channel",
