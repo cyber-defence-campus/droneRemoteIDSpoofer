@@ -15,11 +15,17 @@ Tests parser memory resilience against:
 """
 import argparse
 import logging
+import os
 import sys
 import time
 
-from drone_rid_spoofer.cli import create_backends, DEFAULT_LAT, DEFAULT_LNG
-from drone_rid_spoofer.fuzz_generator import RidFuzzer, FuzzCategory
+# Ensure repository root is in sys.path
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from drone_rid_spoofer.cli import DEFAULT_LAT, DEFAULT_LNG, create_backends
+from drone_rid_spoofer.fuzz_generator import FuzzCategory, RidFuzzer
 from drone_rid_spoofer.helpers import (
     generate_ble_mac,
     generate_wifi_mac,
@@ -96,7 +102,7 @@ def main() -> None:
 
     fuzzer = RidFuzzer(category=args.fuzz_mode)
     drones = [generate_fuzz_drone() for _ in range(args.num_drones)]
-    
+
     # Store dynamic fuzzed payloads per drone serial
     current_payloads = {}
 
@@ -119,7 +125,7 @@ def main() -> None:
                 logging.info(f"[TX: {drone.serial.decode('ascii', errors='replace')}] -> {desc}")
 
             time.sleep(args.cycle_time)
-            
+
     except KeyboardInterrupt:
         logging.info(f"\nFuzzing evaluation terminated by user after {iteration} test cycles.")
     finally:

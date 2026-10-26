@@ -37,20 +37,34 @@ It generates raw 802.11 beacon frames and BLE advertisements containing ASTM F34
 ### Install
 
 ```bash
-git clone https://github.com/cyber-defence-campus/droneRemoteIDSpoofer.git
-cd droneRemoteIDSpoofer
 python3 -m venv .venv
 source .venv/bin/activate
-pip install scapy
+pip install -e .          # add [dev] for pytest/build tooling
 ```
+
+This installs the package and its dependencies into the venv and creates the `drone-spoofer` command at `.venv/bin/drone-spoofer` (used in the examples below).
+
+> **Tip — tab-completion**
+>
+> Install bash completion for the `drone-spoofer` command (interface names after
+> `-i`, Wi-Fi channels after `--wifi-channel`, BLE adapters, transport/mode choices):
+> ```bash
+> ./completion/install-completion.sh      # add sudo to also install system-wide
+> ```
+> Then restart your shell. Since the spoofer needs root, use the entry point by
+> path so completion fires *and* sudo's `secure_path` is bypassed:
+> ```bash
+> sudo .venv/bin/drone-spoofer -i <tab>
+> ```
+> (It also completes for `drone-spoofer …` without sudo.) To load completion for
+> the current shell only: `source completion/drone-spoofer.bash`.
 
 ### Run your first spoof - Single drone
 
-**Wi-Fi** — put your adapter in monitor mode, then:
+**Wi-Fi** — just point the spoofer at your adapter; it configures monitor mode
+(on the target channel) itself and restores managed mode on exit:
 ```bash
-sudo chmod +x ./interface-monitor.sh
-sudo ./interface-monitor.sh <interface-name>
-sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
+sudo .venv/bin/drone-spoofer -i <interface-name>
 ```
 
 > **Important — Legal Compliance & Wi-Fi Regulatory Domain**
@@ -65,28 +79,16 @@ sudo .venv/bin/python3 spoof_drones.py -i <interface-name>
 > - **Do NOT set an arbitrary or foreign regulatory domain** simply to circumvent local frequency restrictions, radar detection (DFS) rules, or transmission bans on specific channels (such as 5.8 GHz channels 149–165). Transmitting on unauthorized frequencies or exceeding local power limits violates national radio laws.
 > - You can verify your active channel permissions, DFS requirements, and power limits at any time using `iw reg get`.
 
-> **Tip — tab-completion & interactive picker**
->
-> Run without arguments to get an interactive interface picker with state/driver/MAC info:
-> ```bash
-> sudo ./interface-monitor.sh
-> ```
-> To enable persistent **tab-completion** for interface names and Wi-Fi channels across reboots and new shell sessions, install it once:
-> ```bash
-> ./interface-monitor.sh --install-completion
-> ```
-> Automatically loads in new terminals for `./interface-monitor.sh`, `interface-monitor.sh`, and `sudo ./interface-monitor.sh`.
-
 **BLE** — make sure your adapter is up:
 ```bash
 sudo rfkill unblock all
 sudo hciconfig hci0 up
-sudo .venv/bin/python3 spoof_drones.py -t ble --ble-adapter hci0
+sudo .venv/bin/drone-spoofer -t ble --ble-adapter hci0
 ```
 
 **Both at once:**
 ```bash
-sudo .venv/bin/python3 spoof_drones.py -i wlan1 -t both --ble-adapter hci0
+sudo .venv/bin/drone-spoofer -i wlan1 -t both --ble-adapter hci0
 ```
 
 **Wi-Fi NAN (Wi-Fi Aware):**
@@ -94,7 +96,7 @@ sudo .venv/bin/python3 spoof_drones.py -i wlan1 -t both --ble-adapter hci0
 *Option A — Direct Linux Raw Packet Injection (Manual Mode - No Android device required):*
 Injects IEEE 802.11 Wi-Fi Aware Action Frames and Discovery Beacons directly from a monitor mode interface:
 ```bash
-sudo .venv/bin/python3 spoof_drones.py -t nan --nan-mode manual -i wlan1
+sudo .venv/bin/drone-spoofer -t nan --nan-mode manual -i wlan1
 ```
 
 *Option B — Android Bridge App (Bridge Mode):*
@@ -105,7 +107,7 @@ adb forward tcp:8080 tcp:8080
 ```
 3. Run the spoofer with `nan` transport in bridge mode:
 ```bash
-python3 spoof_drones.py -t nan --nan-mode bridge --nan-port 8080
+.venv/bin/drone-spoofer -t nan --nan-mode bridge --nan-port 8080
 ```
 
 You should see the spoofed drone appear on any RID receiver within range.
@@ -125,32 +127,32 @@ You should see the spoofed drone appear on any RID receiver within range.
 ### Scenario file
 
 ```bash
-sudo python3 spoof_drones.py -c scenarios/single_random.json
+sudo .venv/bin/drone-spoofer -c scenarios/single_random.json
 ```
 
 ### Drone swarm (5 drones)
 
 ```bash
-sudo python3 spoof_drones.py -i wlan1 -r 5
+sudo .venv/bin/drone-spoofer -i wlan1 -r 5
 ```
 
 ### Manual keyboard control
 
 ```bash
-sudo python3 spoof_drones.py -i wlan1 -m
+sudo .venv/bin/drone-spoofer -i wlan1 -m
 ```
 Use **W/A/S/D** to fly north/west/south/east, **Ctrl+C** to stop.
 
 ### Waypoint flight path
 
 ```bash
-sudo python3 spoof_drones.py -c scenarios/flight_path.json
+sudo .venv/bin/drone-spoofer -c scenarios/flight_path.json
 ```
 
 ### Stress test (20 drones)
 
 ```bash
-sudo python3 spoof_drones.py -c scenarios/stress_test.json
+sudo .venv/bin/drone-spoofer -c scenarios/stress_test.json
 ```
 
 See the `scenarios/` directory for all ready-to-use configs, or create your own — full reference in [CONFIG.md](CONFIG.md).
@@ -215,22 +217,37 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | | `--nan-cluster-id` | `str` | `50:6f:9a:01:00:00` | NAN Cluster BSSID MAC for manual injection |
 | | `--nan-instance-id` | `int/hex` | `0x10` | NAN Service Instance ID for manual injection |
 
+**Single-drone overrides** (applied to the drone in manual mode, or the first drone in automatic mode; the remaining random drones are unaffected). These let you fully configure one drone from the CLI without a scenario JSON:
+
+| Flag | Parameter | Default | Description |
+|------|-----------|---------|-------------|
+| `--mac` | `str` | random LAA | Wi-Fi MAC address |
+| `--ble-mac` | `str` | random static-random | BLE advertising address |
+| `--operator` | `str` | none | Operator ID (max 20 chars) |
+| `--description` | `str` | none | Self-ID text description (max 23 chars) |
+| `--lifespan` | `float` | `0` (forever) | Seconds before the drone stops transmitting |
+| `--static` | - | - | Keep the drone stationary (no random drift) |
+| `--pilot-location` | `lat lng` | near drone | Pilot/operator coordinates (decimal degrees) |
+| `--timestamp-offset` | `float` | `0` | Minutes to shift the ASTM timestamp (negative = past) |
+| `--speed` | `float` | random | Horizontal speed (m/s) |
+| `--vertical-speed` | `float` | random | Vertical speed (m/s, + = climbing) |
+| `--geodetic-altitude` | `float` | random | Geodetic altitude (m MSL) |
+| `--pressure-altitude` | `float` | tracks geodetic | Pressure altitude (m MSL) |
+| `--height` | `float` | random | Height above takeoff (m) |
+
+For multiple precisely-configured drones, per-drone arrays, or waypoint flight paths, use a scenario JSON ([CONFIG.md](CONFIG.md)).
+
 CLI flags override values from scenario config files.
 
 ---
 
 ## Advanced Security Research & Evaluation Suite
 
-In addition to `spoof_drones.py`, the repository includes specialized security evaluation, fuzzing, scanning, and takeover modules:
+In addition to the `drone-spoofer` CLI, the repository includes specialized security evaluation, fuzzing, scanning, and takeover modules:
 
-- **Combined Remote ID Sniffer & DB Logger (`scanner/`)**: Real-time simultaneous Wi-Fi Beacon and BLE sniffer with live curses telemetry dashboard, message pack parser, SQLite database logging (`rid_capture.db`), and CLI query tool (`query_rid_db.py`). See [scanner/README.md](scanner/README.md).
-- **Capacity & RF Benchmarking Suite (`evaluation/`)**: Automated multi-mode benchmark orchestrator (`run_ble_benchmark.py`), high-speed raw socket Wi-Fi sniffer (`wifi_capacity.py`), and BLE capacity tester (`ble_capacity.py`) with publication-ready plotting scripts.
-- **Receiver Vulnerability PoCs (`experiments/`)**: Targeted proof-of-concept injection and fuzzing scripts evaluating parser vulnerabilities and web UI flaws across specific receiver hardware/apps (DroneAware, DroneScout, SkySpy, Sparrow).
-- **Ephemeral Swarm (`ephemeral_swarm.py`)**: High-density identity rotation and multi-transport saturation testing across Wi-Fi, BLE, and NAN.
-- **OTA Fuzzing Suite (`fuzz_rid.py`)**: Automated fuzzing suite for testing receiver resilience against malformed ASTM payloads, XSS/command injection strings, and pagination buffer overflows.
-- **Airborne Takeover (`takeover_figure8.py` & `takeover_predictive.py`)**: Real-time drone duplication, takeover simulation, and predictive trajectory hiding overlays.
-- **PCAP Replay Engine (`replay/replay_drones.py`)**: Replay captured raw 802.11 / BLE Remote ID telemetry from PCAP recordings.
-- **Wi-Fi CTS Jammer (`evaluation/cts_inject`)**: C-based NAV duration CTS reservation tool to evaluate channel contention under jamming.
+- **Capacity & RF Benchmarking Suite (`evaluation/`)**: Automated multi-mode benchmark orchestrator (`run_ble_benchmark.py`), Wi-Fi capacity tester (`wifi_capacity.py`), and BLE capacity tester (`ble_capacity.py`) with unified plotting engine (`plot_capacity.py`, `plot_ble_comparisons.py`). See [evaluation/README.md](evaluation/README.md).
+- **Offensive Security Attacks & Exploit Verification (`attacks/`)**: Comprehensive suite containing real-time drone session takeover (`attacks/takeover/`), EASA registration checksum collision solver (`attacks/protocol/`), ephemeral swarm identity flood (`attacks/ephemeral_swarm.py`), and OTA protocol mutation fuzzer (`attacks/fuzz_rid.py`). See [attacks/README.md](attacks/README.md).
+- **PCAP Replay Engine (`replay/`)**: Replay captured raw 802.11 / BLE Remote ID telemetry from PCAP recordings (`replay/replay_drones.py`).
 
 For comprehensive experiment workflows, parameter guides, and command examples, see the [EXPERIMENT_GUIDE.md](EXPERIMENT_GUIDE.md).
 

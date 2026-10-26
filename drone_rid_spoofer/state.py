@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Tuple, List, Optional
+from typing import List, Optional, Tuple
 
 from drone_rid_spoofer.helpers import drift, random_location
 
@@ -29,6 +29,9 @@ class DroneState:
     pressure_altitude: float = 0.0  # meters MSL
     geodetic_altitude: float = 0.0  # meters MSL
     height: float = 0.0             # meters above takeoff/ground
+    ble_mode: Optional[str] = None  # per-drone BLE mode override ("ext-legacy", "extended", "dual")
+    description: Optional[str] = None  # per-drone Self-ID text description (up to 23 ASCII chars)
+    operator_id: Optional[str] = None  # per-drone Operator ID (up to 20 ASCII chars)
 
     def update_location(self, step: int) -> None:
         """Update drone location randomly within step range."""

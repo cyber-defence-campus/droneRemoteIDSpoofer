@@ -16,34 +16,43 @@ The codebase is structured as a Python package (`drone_rid_spoofer/`) with entry
 
 ```
 spoof_drones.py                         # Main entry-point CLI shim
-ephemeral_swarm.py                      # Multi-transport identity-rotation swarm saturation tool
-fuzz_rid.py                             # Over-the-air protocol & parser fuzzing harness
-takeover_figure8.py                     # Real-time drone sniffing and figure-8 trajectory takeover
-takeover_predictive.py                  # Real-time sniffing and Kalman-like predictive trajectory hiding
-sniffparser.py                          # ASTM F3411 packet dissector and sniffer parser
-interface-monitor.sh                    # Helper script for putting Wi-Fi interfaces into monitor mode
+scenario.json                           # Active local scenario configuration
 
-drone_rid_spoofer/
+drone_rid_spoofer/                      # Core Python library
 ├── __init__.py
 ├── __main__.py                         # python -m drone_rid_spoofer
-├── cli.py                              # CLI argument parsing, scenario loading, backend factory
+├── cli.py                              # CLI argument parsing and backend factory
+├── config.py                           # SpooferConfig: unified CLI/scenario/default resolution
 ├── state.py                            # DroneState dataclass (kinematics, timers, coordinates)
 ├── messages.py                         # ASTM F3411-19/22 message builders (Types 0, 1, 2, 3, 4, 5, 0xF)
+├── parser.py                           # ASTM F3411 packet dissector and payload decoder
 ├── helpers.py                          # MAC/BLE generator, location math, coordinate parsing
 ├── spoofer.py                          # DroneSpoofer controller (manual WASD + automatic swarms)
+├── generation_lock.py                  # GenerationLock: controller/backend sync + cache generation
 ├── takeover.py                         # Sniffing, session hijacking, and trajectory prediction engine
 ├── fuzz_generator.py                   # Protocol mutation engine for OTA fuzzing
 └── transport/
     ├── __init__.py
     ├── base.py                         # TransportBackend abstract base class
+    ├── wifi_interface.py               # Monitor-mode setup/restore for injection interfaces
     ├── wifi.py                         # WifiBackend (raw AF_PACKET 802.11 beacon injection)
     ├── ble.py                          # BleLegacyBackend & BleExtendedBackend (raw Linux HCI sockets)
     └── nan.py                          # NanBridgeBackend (Android TCP) & NanManualBackend (raw 802.11 NAN)
 
+attacks/                                # Security attacks, takeover & exploit PoCs
+├── takeover/                           # Real-time session takeover (figure8, predictive, cts_inject)
+├── protocol/                           # Protocol weakness solvers (EASA Operator ID checksum)
+├── ephemeral_swarm.py                  # Identity-rotation swarm saturation tool
+└── fuzz_rid.py                         # OTA protocol & parser fuzzing harness
+
+evaluation/                             # Benchmarking & capacity plotting suite
+├── ble_capacity.py, wifi_capacity.py, run_ble_benchmark.py
+├── plot_common.py, plot_capacity.py, plot_ble_comparisons.py
+└── data/, plots/, comparison_plots/
+
 scenarios/                              # Pre-configured scenario JSON files
-NaN_Bridge/                             # Android app source for Android Wi-Fi Aware broadcasting
-evaluation/                             # Benchmarking suite (wifi_capacity.py, ble_capacity.py, cts_inject)
 replay/                                 # PCAP capture replay engine (replay_drones.py, pcap_to_replay.py)
+NaN_Bridge/                             # Android app source for Android Wi-Fi Aware broadcasting
 ```
 
 ---
@@ -54,7 +63,6 @@ replay/                                 # PCAP capture replay engine (replay_dro
 Pure builder functions produce 25-byte ASTM F3411-19/22 payloads across all transports:
 - `build_basic_id(serial)` — **Message Type 0x0**: Drone identity and serial number.
 - `build_location_vector(lat, lng, dir, speed, ...)` — **Message Type 0x1**: Geodetic location, altitude, velocity vector, heading, and timestamp.
-- `build_auth(page_header, auth_data)` — **Message Type 0x2**: Authentication data pages.
 - `build_self_id(description)` — **Message Type 0x3**: Plaintext drone self-description.
 - `build_system(pilot_lat, pilot_lng)` — **Message Type 0x4**: Pilot/operator location and system status.
 - `build_operator_id()` — **Message Type 0x5**: Operator registration ID.
@@ -67,10 +75,12 @@ Pure builder functions produce 25-byte ASTM F3411-19/22 payloads across all tran
 The transport layer uses an **asynchronous background-threaded lifecycle**. Instead of synchronous single-packet transmissions, the spoofer starts background threads on each active backend:
 
 ```python
-backend.start(drones, packet_builder)
+backend.start(drones, packet_builder, gen_lock)
 ```
 
-Each transport backend runs its own high-frequency loop optimized for its specific RF timing requirements, decoupled from the spoofer's 1 Hz kinematic update tick:
+Each transport backend runs its own high-frequency loop optimized for its specific RF timing requirements, decoupled from the spoofer's 1 Hz kinematic update tick.
+
+**Concurrency model (`generation_lock.py`).** The controller thread is the sole writer of drone state; every backend transmit thread is a reader. They share a `GenerationLock` — a lock paired with a monotonic generation counter. The controller mutates drones only inside `gen_lock.write()`, which bumps the generation on exit; each backend reads under the same lock and caches the ASTM payloads it built, rebuilding only when the generation advances. The hot transmit path (e.g. Wi-Fi at ~10 Hz) therefore does an integer compare per tick rather than re-encoding every message, and reader threads never observe a torn mid-update state. Backends invoked without a `GenerationLock` (standalone PoC scripts) rebuild every tick, the pre-coordinator behavior.
 
 #### **Wi-Fi Beacon (`WifiBackend` in `transport/wifi.py`)**
 - Assembles raw IEEE 802.11 Beacon frames and injects them via Linux raw `AF_PACKET` sockets on a monitor-mode interface.
@@ -115,7 +125,7 @@ Operates directly over Linux raw HCI sockets (`AF_BLUETOOTH`, `BTPROTO_HCI`):
 ```
 +-------------------------------------------------------------------------+
 |                              CLI / Config                               |
-|              (cli.py: parse_args() / load_config())                     |
+|       (cli.py: parse_args()  ->  config.py: SpooferConfig)              |
 +-------------------------------------------------------------------------+
                                     |
                                     v
@@ -130,21 +140,22 @@ Operates directly over Linux raw HCI sockets (`AF_BLUETOOTH`, `BTPROTO_HCI`):
 |                           (DroneSpoofer)                                |
 |                                                                         |
 |  1. Seeds DroneState list (manual, random swarm, or waypoint routes)    |
-|  2. Calls backend.start(drones, packet_builder)                         |
+|  2. Calls backend.start(drones, packet_builder, gen_lock)               |
 +-------------------------------------------------------------------------+
         |                                                 |
         | (Main Thread: 1 Hz Loop)                       | (Background Threads: Asynchronous)
         v                                                 v
 +-----------------------------+           +-------------------------------+
 |     Kinematic Updates       |           |     Transport Broadcast Loops |
-|                             |           |                               |
+|   (under gen_lock.write())  |           |                               |
 | - WASD keyboard steering    |           | - WifiBackend (102.4ms TUs)   |
 | - Random walk drift         | --------> | - BleExtendedBackend (Dwell)  |
-| - Waypoint step & hold      |  Updates  | - NanManualBackend (512ms DW) |
-| - Lifespan expiration check |  State    |                               |
-+-----------------------------+           | Pulls serialized ASTM packets |
-                                          | via packet_builder(drone)     |
-                                          | and transmits to RF interface |
+| - Waypoint step & hold      |  bump     | - NanManualBackend (512ms DW) |
+| - Lifespan expiration check |  gen      |                               |
++-----------------------------+           | Reads cached ASTM packets     |
+                                          | under GenerationLock, rebuilt |
+                                          | only when the generation      |
+                                          | advances; transmits over RF   |
                                           +-------------------------------+
 ```
 
@@ -152,7 +163,7 @@ Operates directly over Linux raw HCI sockets (`AF_BLUETOOTH`, `BTPROTO_HCI`):
 
 ## Execution & Teardown Lifecycle
 
-1. **Initialization**: `cli.main()` resolves parameters, initializes `DroneState` instances, and instantiates the selected transport backends.
-2. **Start**: `DroneSpoofer` invokes `backend.start(drones, packet_builder)` on all backends, spawning independent transmission daemon threads.
-3. **Execution**: The main thread advances drone kinematics (positions, headings, altitudes, timers) every interval tick. Background threads continuously pull the latest state and transmit over raw sockets.
+1. **Initialization**: `cli.main()` resolves parameters into a `SpooferConfig`, initializes `DroneState` instances, and instantiates the selected transport backends.
+2. **Start**: `DroneSpoofer` invokes `backend.start(drones, packet_builder, gen_lock)` on all backends, sharing the `GenerationLock` and spawning independent transmission daemon threads.
+3. **Execution**: The main thread advances drone kinematics (positions, headings, altitudes, timers) every interval tick inside `gen_lock.write()`. Background threads read the generation-gated packet cache under the lock and transmit over raw sockets.
 4. **Shutdown**: On `SIGINT` (Ctrl+C) or when all drones exceed their lifespan, `DroneSpoofer` runs `backend.close()` on all backends, disabling advertising sets, shutting down sockets, and terminating background threads gracefully.

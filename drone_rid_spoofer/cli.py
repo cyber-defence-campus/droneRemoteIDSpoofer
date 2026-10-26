@@ -4,14 +4,15 @@ import logging
 import sys
 from typing import List
 
-from drone_rid_spoofer.helpers import ParseLocationAction, parse_location
+from drone_rid_spoofer.config import DEFAULT_LAT, DEFAULT_LNG, SpooferConfig
+from drone_rid_spoofer.helpers import ParseLocationAction
 from drone_rid_spoofer.spoofer import DroneSpoofer
 from drone_rid_spoofer.transport.base import TransportBackend
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
-DEFAULT_LAT: int = 473763399
-DEFAULT_LNG: int = 85312562
+# Re-exported for standalone callers (attacks/*.py) that import them from here.
+__all__ = ["DEFAULT_LAT", "DEFAULT_LNG", "SpooferConfig", "create_backends", "main"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ble-adapter", type=str, default=None,
                         help="BLE adapter name (default: hci0). If BLE transport is used")
     parser.add_argument("--ble-interval", type=int, default=None,
-                        help="Interval for BLE 4 legacy advertisements in ms (default: 200)")
+                        help="Interval for BLE 4 legacy advertisements in ms (default: 100)")
     parser.add_argument("--ble-extended-interval", type=int, default=None,
                         help="Interval override for BLE 5 extended advertisements in ms (default: same as --ble-interval)")
     parser.add_argument("--ble-mode", type=str, default=None,
@@ -63,11 +64,22 @@ def parse_args() -> argparse.Namespace:
                              "'ext-legacy' (BLE 4 Legacy PDUs via Extended HCI commands, for modern BLE 5 adapters), "
                              "'legacy' (BLE 4 Legacy Advertising via classic HCI commands), "
                              "or 'dual' (both BLE 4 Legacy + BLE 5 Extended)")
-    parser.add_argument("--wifi-ess", action="store_true", default=None,
+    # Tri-state booleans: each flag and its negation share a dest with
+    # default=None, so "not given" (None) falls through to the scenario config
+    # and a CLI flag can override a config-set value in either direction.
+    parser.add_argument("--wifi-ess", dest="wifi_ess", action="store_true", default=None,
                         help="Set the ESS capability bit on Wi-Fi beacons "
-                             "(default: off; spoofed drone is not advertised as an AP)")
-    parser.add_argument("--no-self-id", action="store_true", default=None,
+                             "(spoofed drone advertised as an AP). Default: off.")
+    parser.add_argument("--no-wifi-ess", dest="wifi_ess", action="store_false",
+                        help="Clear the ESS capability bit (override a scenario that set it)")
+    parser.add_argument("--no-self-id", dest="no_self_id", action="store_true", default=None,
                         help="Omit the Self ID message to reduce airtime and maximize concurrent drones")
+    parser.add_argument("--self-id", dest="no_self_id", action="store_false",
+                        help="Force-include the Self ID message (override a scenario that omitted it)")
+    parser.add_argument("--no-operator-id", dest="no_operator_id", action="store_true", default=None,
+                        help="Omit the Operator ID message to reduce airtime and maximize concurrent drones")
+    parser.add_argument("--operator-id", dest="no_operator_id", action="store_false",
+                        help="Force-include the Operator ID message (override a scenario that omitted it)")
     parser.add_argument("--wifi-channel", type=int, default=None,
                         help="Wi-Fi channel to broadcast on (default: 6)")
     parser.add_argument("--wifi-beacon-interval", type=float, default=None,
@@ -83,10 +95,55 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nan-instance-id", type=lambda x: int(x, 0), default=None,
                         help="Transmitted Service Instance ID byte for manual injection mode (default: 0x10)")
 
+    # Single-drone overrides. Applied to the one drone in manual mode and to the
+    # first drone in automatic mode; the remaining random drones are unaffected.
+    # Multi-drone precise scenarios (per-drone arrays, waypoints) stay JSON-only.
+    drone = parser.add_argument_group(
+        "single-drone overrides",
+        "Configure the (first) drone's identity and kinematics without a scenario "
+        "JSON. Ignored for the random drones beyond the first in automatic mode.")
+    drone.add_argument("--mac", type=str, default=None,
+                       help="Wi-Fi MAC address for the drone (default: random LAA)")
+    drone.add_argument("--ble-mac", type=str, default=None,
+                       help="BLE advertising address for the drone (default: random static-random)")
+    drone.add_argument("--operator", dest="operator_id", type=str, default=None,
+                       help="Operator ID string, max 20 chars (default: none)")
+    drone.add_argument("--description", dest="description", type=str, default=None,
+                       help="Self-ID text description, max 23 chars (default: none)")
+    drone.add_argument("--lifespan", dest="lifespan", type=float, default=None,
+                       help="Seconds before the drone stops transmitting (default: 0 = forever)")
+    drone.add_argument("--static", dest="static", action="store_true", default=None,
+                       help="Keep the drone stationary instead of drifting randomly")
+    drone.add_argument("--pilot-location", dest="pilot_location", nargs=2,
+                       metavar=("LATITUDE", "LONGITUDE"),
+                       action=ParseLocationAction,
+                       help="Pilot/operator coordinates (decimal degrees; default: near the drone)")
+    drone.add_argument("--timestamp-offset", dest="timestamp_offset", type=float, default=None,
+                       help="Minutes to shift the ASTM timestamp (negative = past; default: 0)")
+    drone.add_argument("--speed", dest="speed", type=float, default=None,
+                       help="Horizontal speed in m/s (default: random)")
+    drone.add_argument("--vertical-speed", dest="vertical_speed", type=float, default=None,
+                       help="Vertical speed in m/s, positive = climbing (default: random)")
+    drone.add_argument("--geodetic-altitude", dest="geodetic_altitude", type=float, default=None,
+                       help="Geodetic altitude in meters MSL (default: random)")
+    drone.add_argument("--pressure-altitude", dest="pressure_altitude", type=float, default=None,
+                       help="Pressure altitude in meters MSL (default: tracks geodetic)")
+    drone.add_argument("--height", dest="height", type=float, default=None,
+                       help="Height above takeoff in meters (default: random)")
+
     args = parser.parse_args()
 
     if args.serial and len(args.serial) > 20:
         parser.error("Serial number must be 20 characters or less")
+
+    if args.operator_id and len(args.operator_id) > 20:
+        parser.error("Operator ID must be 20 characters or less")
+
+    if args.description and len(args.description) > 23:
+        parser.error("Self-ID description must be 23 characters or less")
+
+    if args.lifespan is not None and args.lifespan < 0:
+        parser.error("Lifespan must be non-negative")
 
     if args.random is not None and args.random < 1:
         parser.error("Number of random drones must be at least 1")
@@ -109,9 +166,18 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                     nan_cluster_id: str = "50:6f:9a:01:00:00",
                     nan_instance_id: int = 0x10,
                     update_interval: float = 1.0) -> List[TransportBackend]:
-    """Create transport backend instances based on configuration."""
+    """Create transport backend instances based on configuration.
+
+    The main app resolves every value through :class:`SpooferConfig` and passes
+    them explicitly; the defaults here serve only standalone callers (e.g.
+    ``attacks/*.py``) that invoke this directly.
+    """
     backends: List[TransportBackend] = []
 
+    # Construction is pure (no I/O): backends acquire sockets/radios lazily in
+    # open(), which start() calls. So a constructor cannot leak a resource, and
+    # any open() failure at start() time is cleaned up by the caller's close()
+    # of every backend in this list (see cli.main's finally).
     if transport in ("wifi", "both", "all"):
         from drone_rid_spoofer.transport.wifi import WifiBackend
         backends.append(WifiBackend(interface, ess=wifi_ess, channel=wifi_channel, beacon_interval=wifi_beacon_interval))
@@ -154,98 +220,30 @@ def main() -> None:
     """Main entry point."""
     try:
         args = parse_args()
-        config = {}
-        if args.config:
-            config = load_config(args.config)
-        config_global = config.get("global", {})
-        args.drones_config = config.get("drones", [])
+        raw_config = load_config(args.config) if args.config else {}
+        cfg = SpooferConfig.from_sources(args, raw_config)
 
-        if args.interface is None:
-            args.interface = config_global.get("interface", "wlan1")
+        logging.info(f"Interface: {cfg.interface}")
+        logging.info(f"Transport: {cfg.transport}")
+        logging.info(f"Location: {cfg.location}")
+        logging.info(f"Interval between packets(s): {cfg.interval}s")
 
-        if args.interval is None:
-            args.interval = float(config_global.get("interval", 1.0))
-
-        if args.random is None:
-            args.random = int(config_global.get("random", 1))
-
-        if args.location is None:
-            if "location" in config_global:
-                cfg_location = config_global["location"]
-                if len(cfg_location) != 2:
-                    raise ValueError("global.location must have two values: [lat, lng]")
-                args.location = parse_location(str(cfg_location[0]), str(cfg_location[1]))
-            else:
-                args.location = (DEFAULT_LAT, DEFAULT_LNG)
-                logging.info("Using default location (Zurich)")
-
-        # Transport configuration
-        if args.transport is None:
-            args.transport = config_global.get("transport", "wifi")
-
-        ble_config = config_global.get("ble", {})
-        if args.ble_adapter is None:
-            args.ble_adapter = ble_config.get("adapter", "hci0")
-        
-        if args.ble_interval is None:
-            args.ble_interval = ble_config.get("advertising_interval_ms", 200)
-            
-        if args.ble_extended_interval is None:
-            args.ble_extended_interval = ble_config.get("extended_interval_ms", args.ble_interval)
-
-        # Resolve BLE mode from CLI flag or scenario config
-        if getattr(args, 'ble_mode', None) is None:
-            args.ble_mode = ble_config.get("mode", "extended")
-
-        args.ble_mode = args.ble_mode.replace("_", "-")
-
-        if args.wifi_ess is None:
-            wifi_config = config_global.get("wifi", {})
-            args.wifi_ess = bool(wifi_config.get("ess", False))
-            
-        if getattr(args, 'wifi_channel', None) is None:
-            wifi_config = config_global.get("wifi", {})
-            args.wifi_channel = int(wifi_config.get("channel", 6))
-            
-        if getattr(args, 'wifi_beacon_interval', None) is None:
-            wifi_config = config_global.get("wifi", {})
-            args.wifi_beacon_interval = float(wifi_config.get("beacon_interval", 0.1024))
-
-        nan_config = config_global.get("nan", {})
-        if getattr(args, 'nan_port', None) is None:
-            args.nan_port = int(nan_config.get("port", 8080))
-        if getattr(args, 'nan_mode', None) is None:
-            args.nan_mode = str(nan_config.get("mode", "bridge"))
-        if getattr(args, 'nan_cluster_id', None) is None:
-            args.nan_cluster_id = str(nan_config.get("cluster_id", "50:6f:9a:01:00:00"))
-        if getattr(args, 'nan_instance_id', None) is None:
-            val = nan_config.get("instance_id", 0x10)
-            args.nan_instance_id = int(val, 0) if isinstance(val, str) else int(val)
-
-        if args.random < 1:
-            raise ValueError("Number of random drones must be at least 1")
-
-        logging.info(f"Interface: {args.interface}")
-        logging.info(f"Transport: {args.transport}")
-        logging.info(f"Location: {args.location}")
-        logging.info(f"Interval between packets(s): {args.interval}s")
-
-        backends = create_backends(args.transport, args.interface, args.ble_adapter,
-                                   args.ble_interval, 
-                                   ble_extended_interval=args.ble_extended_interval,
-                                   ble_mode=args.ble_mode,
-                                   wifi_ess=args.wifi_ess,
-                                   wifi_channel=args.wifi_channel,
-                                   wifi_beacon_interval=args.wifi_beacon_interval,
-                                   nan_port=args.nan_port,
-                                   nan_mode=args.nan_mode,
-                                   nan_cluster_id=args.nan_cluster_id,
-                                   nan_instance_id=args.nan_instance_id,
-                                   update_interval=args.interval)
-        spoofer = DroneSpoofer(args, backends)
+        backends = create_backends(cfg.transport, cfg.interface, cfg.ble_adapter,
+                                   cfg.ble_interval,
+                                   ble_extended_interval=cfg.ble_extended_interval,
+                                   ble_mode=cfg.ble_mode,
+                                   wifi_ess=cfg.wifi_ess,
+                                   wifi_channel=cfg.wifi_channel,
+                                   wifi_beacon_interval=cfg.wifi_beacon_interval,
+                                   nan_port=cfg.nan_port,
+                                   nan_mode=cfg.nan_mode,
+                                   nan_cluster_id=cfg.nan_cluster_id,
+                                   nan_instance_id=cfg.nan_instance_id,
+                                   update_interval=cfg.interval)
+        spoofer = DroneSpoofer(cfg, backends)
 
         try:
-            if args.manual:
+            if cfg.manual:
                 spoofer.run_manual_mode()
             else:
                 spoofer.run_automatic_mode()

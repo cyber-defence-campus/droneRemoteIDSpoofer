@@ -14,8 +14,9 @@ Standard library only (struct, datetime, re) with zero external dependencies.
 """
 
 import base64
-import struct
 import re
+import struct
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -198,13 +199,23 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
     if msg_type not in (0x0, 0x1, 0x2, 0x3, 0x4, 0x5):
         return None
 
+    is_zeroed = (len(block) >= 25 and block[1:25] == b'\x00' * 24)
+    is_known_version = proto_ver in PROTO_VERSION_NAMES
+
     result: Dict[str, Any] = {
         "msg_type": msg_type,
         "type": MSG_TYPE_NAMES.get(msg_type, f"Unknown ({msg_type})"),
         "protocol_version": proto_ver,
-        "proto_version_name": PROTO_VERSION_NAMES.get(proto_ver, f"Version {proto_ver}"),
+        "proto_version_name": PROTO_VERSION_NAMES.get(proto_ver, f"Unknown Version (v{proto_ver})"),
+        "is_known_version": is_known_version,
         "raw_hex": block[:25].hex().upper(),
+        "is_zeroed": is_zeroed,
     }
+
+    if not is_known_version:
+        result["raw_payload_hex"] = block[1:25].hex().upper()
+        result["unparsed_reason"] = f"Unknown protocol version {proto_ver}; payload layout unsupported"
+        return result
 
     try:
         if msg_type == 0x0:  # Basic ID (Type 0)
@@ -227,19 +238,28 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
             ew_dir = (b1 >> 1) & 0x01
             speed_mult = b1 & 0x01
 
+            # Direction: 0-179 encoded directly (E/W bit clear), 180-360 as value-180 with E/W bit
+            # set. 361 (raw 181, E/W set) is the spec's "unknown" value. Off-spec encodings are
+            # decoded anyway (> 360 normalized into 0-359) rather than discarded.
             dir_raw = block[2]
             direction_deg = dir_raw + 180 if ew_dir else dir_raw
-            if direction_deg > 360:
+            if direction_deg == 361:
                 direction_deg = None
+            elif direction_deg > 360:
+                direction_deg %= 360
 
+            # Horizontal speed: unknown (255 m/s) encodes as raw 255 with the multiplier bit set.
+            # Raw 255 without the multiplier is a valid 63.75 m/s.
             speed_raw = block[3]
-            if speed_raw == 255 and speed_mult == 0:
+            if speed_raw == 255 and speed_mult == 1:
                 speed_mps = None
             else:
                 speed_mps = (speed_raw * 0.25) if speed_mult == 0 else (63.75 + speed_raw * 0.75)
 
+            # Vertical speed: 0.5 m/s steps, valid range +/-62 m/s (raw +/-124).
+            # Unknown (63 m/s) encodes as raw 126; anything beyond +/-124 is out of spec.
             v_speed_raw = struct.unpack('<b', block[4:5])[0]
-            v_speed_mps = None if v_speed_raw == 63 else (v_speed_raw * 0.5)
+            v_speed_mps = None if abs(v_speed_raw) > 124 else (v_speed_raw * 0.5)
 
             lat_raw = struct.unpack('<i', block[5:9])[0]
             lon_raw = struct.unpack('<i', block[9:13])[0]
@@ -269,6 +289,8 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
             b23 = block[23]
             ts_acc = b23 & 0x0F
 
+            chosen_alt = g_alt_m if g_alt_m is not None else p_alt_m
+
             result.update({
                 "status": status,
                 "status_name": STATUS_NAMES.get(status, f"Reserved ({status})"),
@@ -281,7 +303,7 @@ def decode_astm_message(block: bytes) -> Optional[Dict[str, Any]]:
                 "lon": lon,
                 "pressure_altitude_m": round(p_alt_m, 2) if p_alt_m is not None else None,
                 "geodetic_altitude_m": round(g_alt_m, 2) if g_alt_m is not None else None,
-                "alt": round(g_alt_m or p_alt_m or 0.0, 2) if (g_alt_m or p_alt_m) else None,
+                "alt": round(chosen_alt, 2) if chosen_alt is not None else None,
                 "height_m": round(height_m, 2) if height_m is not None else None,
                 "height_type": height_type,
                 "height_type_name": HEIGHT_TYPE_NAMES.get(height_type, "Unknown"),
@@ -475,6 +497,53 @@ def parse_astm_payload(payload: bytes) -> Tuple[List[Dict[str, Any]], List[str]]
     return results, raw_b64_blocks
 
 
+def extract_ble_rid_payload(adv_data: bytes) -> Optional[Tuple[int, bytes, List[Dict[str, Any]], List[str]]]:
+    """
+    Unified ASTM F3411 Remote ID extractor for Bluetooth Low Energy advertising data.
+
+    Used identically across all BLE capture engines (nRF sniffer subprocess, Linux HCI socket).
+    Walks standard Bluetooth LTV (Length-Type-Value) structures to find:
+      - AD Type 0x16 (Service Data - 16-bit UUID)
+      - Service UUID 0xFFFA (little-endian: 0xFA, 0xFF)
+      - Application Code 0x0D (ASTM F3411 / OpenDroneID)
+
+    Returns:
+        (counter, astm_bytes, parsed_messages, messages_b64) or None if not an ASTM RID advertisement.
+    """
+    if not adv_data or len(adv_data) < 29:
+        return None
+
+    offset = 0
+    total_len = len(adv_data)
+    astm_data = None
+    counter = 0
+
+    while offset < total_len:
+        ad_len = adv_data[offset]
+        if ad_len == 0 or offset + 1 + ad_len > total_len:
+            break
+        ad_type = adv_data[offset + 1]
+        ad_val = adv_data[offset + 2 : offset + 1 + ad_len]
+        offset += 1 + ad_len
+
+        # AD Type 0x16 = Service Data - 16-bit UUID
+        if ad_type == 0x16 and len(ad_val) >= 4:
+            if ad_val[:2] == BLE_RID_UUID:
+                if ad_val[2] == APP_CODE_RID:
+                    counter = ad_val[3]
+                    astm_data = ad_val[4:]
+                    break
+
+    if astm_data is None or len(astm_data) < 25:
+        return None
+
+    parsed_messages, messages_b64 = parse_astm_payload(astm_data)
+    if not parsed_messages:
+        return None
+
+    return counter, astm_data, parsed_messages, messages_b64
+
+
 class ASTM_F3411_SpecParser:
     """Universal ASTM F3411 Parser Class compatible with all sniffers and evaluation scripts."""
     def __init__(self, raw_bytes: bytes):
@@ -485,40 +554,21 @@ class ASTM_F3411_SpecParser:
         return results
 
 
-# --- Scapy Sniffer Logic (Lazy Import) ---
-
-def packet_callback(pkt):
-    from scapy.all import Dot11Beacon, Dot11Elt
-    if pkt.haslayer(Dot11Beacon):
-        elt = pkt.getlayer(Dot11Elt)
-        while isinstance(elt, Dot11Elt):
-            if elt.ID == 221 and elt.info.startswith(b'\xfa\x0b\xbc'):
-                astm_payload = elt.info[5:]
-                try:
-                    parser = ASTM_F3411_SpecParser(astm_payload)
-                    data = parser.parse_payload()
-                    if data:
-                        chan_info = ""
-                        if pkt.haslayer("RadioTap"):
-                            try:
-                                freq = pkt.getlayer("RadioTap").ChannelFrequency
-                                if freq == 2484: chan = 14
-                                elif freq < 2484: chan = (freq - 2407) // 5
-                                elif freq > 5000: chan = (freq - 5000) // 5
-                                else: chan = freq
-                                chan_info = f", Ch: {chan}"
-                            except Exception:
-                                pass
-                        print(f"\n[+] Remote ID Detected from {pkt.addr2} (RSSI: {pkt.dBm_AntSignal}dBm{chan_info})")
-                        for entry in data:
-                            print(f"    - {entry}")
-                except Exception:
-                    pass
-            elt = elt.payload
+def is_valid_timestamp(
+    ts: Optional[float],
+    min_valid: Optional[float] = None,
+    max_skew_s: float = 31536000.0,
+    ref_now: Optional[float] = None,
+) -> bool:
+    """Checks whether a numeric timestamp falls within acceptable dynamic bounds."""
+    if ts is None:
+        return False
+    try:
+        val = float(ts)
+    except (ValueError, TypeError):
+        return False
+    min_bound = min_valid if min_valid is not None else 1767225600.0  # 2026-01-01 UTC
+    now = ref_now if ref_now is not None else time.time()
+    return min_bound <= val <= (now + max_skew_s)
 
 
-if __name__ == "__main__":
-    from scapy.all import sniff
-    interface = "wlx40ae30abad23"
-    print(f"[*] Starting Remote ID Scanner on {interface}...")
-    sniff(iface=interface, prn=packet_callback, store=0)

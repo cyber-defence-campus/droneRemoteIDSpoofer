@@ -8,6 +8,7 @@ import tty
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.helpers import (
     generate_ble_mac,
     generate_wifi_mac,
@@ -22,7 +23,7 @@ from drone_rid_spoofer.helpers import (
 )
 from drone_rid_spoofer.messages import build_all_messages
 from drone_rid_spoofer.state import DroneState
-from drone_rid_spoofer.transport.base import TransportBackend
+from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +35,14 @@ class DroneSpoofer:
         self.args = args
         self.backends = backends
         self.base_location = args.location
+        self._gen_lock: Optional[GenerationLock] = None
         self._setup_logging()
 
     def _setup_logging(self) -> None:
         level = logging.DEBUG if getattr(self.args, 'verbose', False) else logging.INFO
         logging.getLogger().setLevel(level)
 
-    def _get_packet_builder(self):
+    def _get_packet_builder(self) -> PacketBuilder:
         """Return a callable that generates ASTM messages for a drone."""
         return lambda drone: build_all_messages(
             drone,
@@ -52,26 +54,38 @@ class DroneSpoofer:
         """Run controlled drone spoofing with keyboard input."""
         logger.info("Starting MANUAL MODE - Use WASD to control drone movement")
 
+        overrides = self._cli_overrides()
         serial = self.args.serial.encode() if self.args.serial else get_random_serial_number()
         lat, lng = random_location(*self.args.location, 10000)
-        pilot_loc = get_random_pilot_location(lat, lng)
-        mac_addr = generate_wifi_mac()
-        ble_addr = generate_ble_mac()
+        pilot_loc = overrides.get("pilot_location") or get_random_pilot_location(lat, lng)
+        mac_addr = overrides.get("mac") or generate_wifi_mac()
+        ble_addr = overrides.get("ble_mac") or generate_ble_mac()
 
-        drone = DroneState(serial, pilot_loc, lat, lng, mac_addr, ble_addr)
-        self._seed_kinematics(drone)
+        drone = DroneState(
+            serial=serial,
+            pilot_location=pilot_loc,
+            lat=lat,
+            lng=lng,
+            mac_address=mac_addr,
+            ble_address=ble_addr,
+            lifespan_seconds=float(overrides.get("lifespan", 0.0)),
+            timestamp_offset=float(overrides.get("timestamp_offset", 0.0)),
+            description=overrides.get("description"),
+            operator_id=overrides.get("operator_id"),
+        )
+        self._seed_kinematics(drone, overrides=self._extract_kinematic_overrides(overrides))
         logger.info(f"Drone {serial.decode()} created at [{lat}, {lng}] with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr}")
 
         self._run_manual_control_loop(drone)
 
     def _run_manual_control_loop(self, drone: DroneState) -> None:
-        next_send = datetime.now()
         stdin_fd = sys.stdin.fileno()
         original_settings = termios.tcgetattr(stdin_fd)
-        
+
+        self._gen_lock = GenerationLock()
         builder = self._get_packet_builder()
         for backend in self.backends:
-            backend.start([drone], builder)
+            backend.start([drone], builder, self._gen_lock)
 
         try:
             tty.setcbreak(stdin_fd)
@@ -85,11 +99,11 @@ class DroneSpoofer:
                 if self._has_keyboard_input():
                     key = sys.stdin.read(1)
                     self._process_movement_key(drone, key)
-                
+
                 # 2. Advance deadline for next tick
                 if now >= next_tick:
                     logger.debug(f"Tick for {drone.serial.decode()}")
-                    
+
                     # Schedule next tick
                     next_tick += interval
                     # If we fell behind, skip ahead to avoid burst catch-up
@@ -119,7 +133,8 @@ class DroneSpoofer:
 
         if key in key_map:
             direction = key_map[key]
-            drone.move(direction, 1000)
+            with self._gen_lock.write():
+                drone.move(direction, 1000)
             logger.info(f"Moved {direction.upper()}")
 
     def run_automatic_mode(self) -> None:
@@ -133,19 +148,55 @@ class DroneSpoofer:
 
         self._run_automatic_loop(drones)
 
+    def _cli_overrides(self) -> dict:
+        """Collect the single-drone CLI overrides that were actually given.
+
+        Only keys whose flag was passed (non-None) appear, so callers can treat
+        the dict as "apply these, leave everything else random".
+        """
+        keys = ("mac", "ble_mac", "operator_id", "description", "lifespan",
+                "static", "pilot_location", "timestamp_offset", "speed",
+                "vertical_speed", "geodetic_altitude", "pressure_altitude",
+                "height")
+        return {k: getattr(self.args, k) for k in keys
+                if getattr(self.args, k, None) is not None}
+
     def _create_drones(self, count: int) -> List[DroneState]:
         drones = []
         base_lat, base_lng = self.base_location
 
-        for i in range(count):
-            serial = get_random_serial_number()
-            lat, lng = random_location(base_lat, base_lng, 50000)
-            pilot_loc = get_random_pilot_location(lat, lng)
-            mac_addr = generate_wifi_mac()
-            ble_addr = generate_ble_mac()
+        # A custom --serial and the other --mac/--operator/... overrides apply to
+        # the first drone only; the rest stay fully random so a single override
+        # and --random N > 1 don't produce duplicate identifiers.
+        custom_serial = getattr(self.args, "serial", None)
+        overrides = self._cli_overrides()
 
-            drone = DroneState(serial, pilot_loc, lat, lng, mac_addr, ble_addr)
-            self._seed_kinematics(drone)
+        for i in range(count):
+            apply = overrides if i == 0 else {}
+
+            if i == 0 and custom_serial:
+                serial = custom_serial.encode()
+            else:
+                serial = get_random_serial_number()
+            lat, lng = random_location(base_lat, base_lng, 50000)
+            pilot_loc = apply.get("pilot_location") or get_random_pilot_location(lat, lng)
+            mac_addr = apply.get("mac") or generate_wifi_mac()
+            ble_addr = apply.get("ble_mac") or generate_ble_mac()
+
+            drone = DroneState(
+                serial=serial,
+                pilot_location=pilot_loc,
+                lat=lat,
+                lng=lng,
+                mac_address=mac_addr,
+                ble_address=ble_addr,
+                mode="static" if apply.get("static") else "random",
+                lifespan_seconds=float(apply.get("lifespan", 0.0)),
+                timestamp_offset=float(apply.get("timestamp_offset", 0.0)),
+                description=apply.get("description"),
+                operator_id=apply.get("operator_id"),
+            )
+            self._seed_kinematics(drone, overrides=self._extract_kinematic_overrides(apply))
             drones.append(drone)
             logger.info(f"Drone {serial.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr}")
 
@@ -211,6 +262,9 @@ class DroneSpoofer:
             lifespan_seconds = entry.get("lifespan_seconds", 0)
 
             drone_transport = entry.get("transport")
+            drone_ble_mode = entry.get("ble_mode")
+            drone_desc = entry.get("description") or entry.get("self_id")
+            drone_operator_id = entry.get("operator_id")
             timestamp_offset = entry.get("timestamp_offset_minutes", 0.0)
 
             drone = DroneState(
@@ -225,10 +279,13 @@ class DroneSpoofer:
                 waypoints=waypoints,
                 transport=drone_transport,
                 timestamp_offset=float(timestamp_offset),
+                ble_mode=drone_ble_mode,
+                description=drone_desc,
+                operator_id=drone_operator_id,
             )
             self._seed_kinematics(drone, overrides=self._extract_kinematic_overrides(entry))
             drones.append(drone)
-            logger.info(f"Drone {serial_bytes.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr} mode={mode}")
+            logger.info(f"Drone {serial_bytes.decode()} created with Wi-Fi MAC {mac_addr}, BLE addr {ble_addr} mode={mode} ble_mode={drone_ble_mode}")
 
         return drones
 
@@ -240,54 +297,63 @@ class DroneSpoofer:
 
     def _run_automatic_loop(self, drones: List[DroneState]) -> None:
         interval = float(self.args.interval)
-        
+
         # Initialize end_time for all drones based on when the loop actually starts
         loop_start_time = datetime.now()
         for drone in drones:
             if getattr(drone, 'lifespan_seconds', 0) > 0:
                 drone.end_time = loop_start_time + timedelta(seconds=drone.lifespan_seconds)
-                
+
+        self._gen_lock = GenerationLock()
         builder = self._get_packet_builder()
         for backend in self.backends:
-            backend.start(drones, builder)
-                
+            backend.start(drones, builder, self._gen_lock)
+
         next_tick = time.time()
         packet_batch_count = 0
 
         try:
             while True:
-                active_count = 0
                 dt_now = datetime.now()
-                
-                # 1. Process all drones in this batch
-                for drone in drones:
-                    if drone.end_time and dt_now >= drone.end_time:
-                        if drone.active:
-                            logger.info(f"Drone {drone.serial.decode()} expired; stopping transmission")
-                            drone.active = False
-                            for backend in self.backends:
-                                backend.remove_drone(drone)
-                        continue
-                    if not drone.active:
-                        continue
-                        
-                    active_count += 1
-                    if drone.mode == "random":
-                        drone.update_location(10000)
-                        drone.drift_kinematics()
-                    elif drone.mode == "waypoints":
-                        self._update_waypoints(drone, dt_now)
+                expired: List[DroneState] = []
+
+                # 1. Advance all drone state as the single writer, under the
+                #    generation lock so backend readers never see a torn update.
+                with self._gen_lock.write():
+                    active_count = 0
+                    for drone in drones:
+                        if drone.end_time and dt_now >= drone.end_time:
+                            if drone.active:
+                                drone.active = False
+                                expired.append(drone)
+                            continue
+                        if not drone.active:
+                            continue
+
+                        active_count += 1
+                        if drone.mode == "random":
+                            drone.update_location(10000)
+                            drone.drift_kinematics()
+                        elif drone.mode == "waypoints":
+                            self._update_waypoints(drone, dt_now)
+
+                # Backend-internal cleanup for expired drones runs outside the
+                # write lock (it touches only per-backend bookkeeping).
+                for drone in expired:
+                    logger.info(f"Drone {drone.serial.decode()} expired; stopping transmission")
+                    for backend in self.backends:
+                        backend.remove_drone(drone)
 
                 packet_batch_count += 1
                 logger.info(f"Sent batch {packet_batch_count} ({active_count} active drones)")
-                
+
                 if active_count == 0:
                     logger.info("No active drones remaining; stopping automatic mode")
                     break
-                    
+
                 # 2. Advance deadline for next batch
                 next_tick += interval
-                
+
                 # 3. If the work took longer than the interval, slide the deadline forward
                 # to prevent a "catch-up" burst of packets.
                 now = time.time()

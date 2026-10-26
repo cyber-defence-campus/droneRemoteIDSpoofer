@@ -25,13 +25,15 @@ import select
 import socket
 import struct
 import subprocess
-import time
 import threading
-from typing import Dict, List, Optional
+import time
+from collections import deque
+from typing import Deque, Dict, List, Optional
 
-from drone_rid_spoofer.state import DroneState
+from drone_rid_spoofer.generation_lock import GenerationLock
 from drone_rid_spoofer.messages import MsgType
-from drone_rid_spoofer.transport.base import TransportBackend
+from drone_rid_spoofer.state import DroneState
+from drone_rid_spoofer.transport.base import PacketBuilder, TransportBackend
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,19 @@ def _build_hci_command(opcode: int, data: bytes) -> bytes:
     return struct.pack('<BHB', 0x01, opcode, len(data)) + data
 
 
+# Upper bound on buffered HCI events. Only LE Advertising Set Terminated events
+# are ever read back from the buffer, and at most a couple are pending at once,
+# so this is a generous safety cap that keeps the buffer from ever growing
+# without limit if a terminated event is produced but never awaited.
+_EVENT_BUFFER_MAX = 64
+
+
+def _is_adv_terminated(pkt: bytes) -> bool:
+    """True if pkt is an LE Advertising Set Terminated event (HCI LE Meta 0x3E,
+    subevent 0x12), for any advertising handle."""
+    return len(pkt) >= 6 and pkt[0] == HCI_EVENT_PKT and pkt[1] == 0x3E and pkt[3] == 0x12
+
+
 # ── Shared base class ─────────────────────────────────────────────────────────
 
 class _BleBase(TransportBackend):
@@ -112,16 +127,32 @@ class _BleBase(TransportBackend):
         self._sock: Optional[socket.socket] = None
         self._static_index: Dict[bytes, int] = {}  # per-drone static-msg rotation pointer
         self._cycle_counts: Dict[bytes, int] = {}  # per-drone cycle counter for staggering
-        self._event_buffer: List[bytes] = []  # Buffer for unhandled HCI events
+        # Bounded buffer holding only pending LE Advertising Set Terminated
+        # events (the only kind ever read back). Capped so it cannot grow
+        # without limit; non-terminated events are dropped rather than stored.
+        self._event_buffer: Deque[bytes] = deque(maxlen=_EVENT_BUFFER_MAX)
         self._counters: Dict[str, int] = {}  # general counter fallback
         self._legacy_counters: Dict[str, int] = {}  # per-drone message sequence counter (legacy)
         self._extended_counters: Dict[str, int] = {}  # per-drone message sequence counter (extended)
         self._drones = []
-        self._packet_builder = None
+        self._packet_builder: Optional[PacketBuilder] = None
         self._running = False
         self._thread = None
+
+    def _acquire(self) -> None:
+        """Open the HCI socket and configure advertising sets (transmit side)."""
         self._open_socket()
-        self._init_advertising()
+        try:
+            self._init_advertising()
+        except Exception:
+            # Don't leak the HCI socket we just opened if advertising setup fails.
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
+            raise
 
     def _open_socket(self) -> None:
         """Open raw HCI socket and ensure the adapter is up."""
@@ -144,6 +175,12 @@ class _BleBase(TransportBackend):
             )
             self._sock.bind((self.adapter_id,))
         except (OSError, PermissionError) as e:
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
             raise RuntimeError(
                 f"Failed to open HCI socket on {self.adapter}. "
                 f"Requires root and Linux with Bluetooth adapter. Error: {e}"
@@ -161,9 +198,10 @@ class _BleBase(TransportBackend):
 
         logger.info(f"BLE backend: opened HCI socket on {self.adapter}")
 
-    def start(self, drones: List[DroneState], packet_builder) -> None:
-        self._drones = drones
-        self._packet_builder = packet_builder
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
+              gen_lock: Optional[GenerationLock] = None) -> None:
+        self.open()
+        self._bind(drones, packet_builder, gen_lock)
         self._running = True
         self._thread = threading.Thread(target=self._transmit_loop, daemon=True)
         self._thread.start()
@@ -210,10 +248,14 @@ class _BleBase(TransportBackend):
                 status = pkt[3]
                 evt_opcode = struct.unpack("<H", pkt[5:7])[0]
             else:
-                self._event_buffer.append(pkt)
-                continue  # unrelated event, keep draining
+                # Meta/other event: keep only if it's a terminated event some
+                # later _wait_for_adv_terminated will consume; drop otherwise.
+                if _is_adv_terminated(pkt):
+                    self._event_buffer.append(pkt)
+                continue  # keep draining for our Command Complete/Status
             if evt_opcode != opcode:
-                self._event_buffer.append(pkt)
+                # Command Complete/Status for a different opcode — never read
+                # back by anyone, so drop it instead of leaking it.
                 continue
             if status != 0:
                 # 0x0C "Command Disallowed" on advertising enable/disable just
@@ -233,14 +275,12 @@ class _BleBase(TransportBackend):
         deadline = time.monotonic() + timeout
 
         def is_terminated_event(p: bytes) -> bool:
-            if len(p) >= 6 and p[0] == HCI_EVENT_PKT and p[1] == 0x3E and p[3] == 0x12:
-                return p[5] == handle
-            return False
+            return _is_adv_terminated(p) and p[5] == handle
 
         # 1. Check if the event is already in the buffer
         for i, p in enumerate(self._event_buffer):
             if is_terminated_event(p):
-                self._event_buffer.pop(i)
+                del self._event_buffer[i]
                 return True
 
         # 2. Read from socket if not found
@@ -255,32 +295,38 @@ class _BleBase(TransportBackend):
                 pkt = self._sock.recv(258)
             except OSError:
                 return False
-            
+
             if is_terminated_event(pkt):
                 return True
-            else:
+            elif _is_adv_terminated(pkt):
+                # Terminated event for a different handle — keep for its waiter.
                 self._event_buffer.append(pkt)
+            # else: unrelated event — drop it.
 
     def _flush_adv_terminated_events(self, handle: int) -> None:
-        """Clear any stale LE Advertising Set Terminated events for the given handle from the buffer."""
+        """Clear any stale LE Advertising Set Terminated events for the given handle."""
         def is_terminated_event(p: bytes) -> bool:
-            if len(p) >= 6 and p[0] == HCI_EVENT_PKT and p[1] == 0x3E and p[3] == 0x12:
-                return p[5] == handle
-            return False
-            
-        # Drain the socket completely so all pending events are in the buffer
+            return _is_adv_terminated(p) and p[5] == handle
+
+        # Drain the socket; keep only terminated events for *other* handles
+        # (their waiters still need them) and drop everything else.
         while True:
             ready, _, _ = select.select([self._sock], [], [], 0.0)
             if not ready:
                 break
             try:
                 pkt = self._sock.recv(258)
-                self._event_buffer.append(pkt)
             except OSError:
                 break
+            if _is_adv_terminated(pkt) and pkt[5] != handle:
+                self._event_buffer.append(pkt)
 
-        # Remove all terminated events for this handle
-        self._event_buffer = [p for p in self._event_buffer if not is_terminated_event(p)]
+        # Drop any already-buffered terminated events for this handle, keeping
+        # the buffer a bounded deque.
+        self._event_buffer = deque(
+            (p for p in self._event_buffer if not is_terminated_event(p)),
+            maxlen=_EVENT_BUFFER_MAX,
+        )
 
     def _warn_if_bad_random_address(self, mac: str, addr_bytes: bytes) -> None:
         """Log a warning if MAC doesn't satisfy BLE Static Random Address format."""
@@ -310,22 +356,22 @@ class _BleBase(TransportBackend):
 
         if static_msgs:
             cycle_count = self._cycle_counts.get(drone_key, 0)
-            
+
             # Use drone_key to stagger the heavy cycle across different drones
             offset = sum(drone_key) % 3
             c = cycle_count + offset
-            
+
             # Send 2 statics every 3rd cycle, otherwise 1 static (averages 1.33)
             num_statics = 2 if (c % 3) == 0 else 1
-            
+
             idx = self._static_index.get(drone_key, 0)
             for _ in range(min(num_statics, len(static_msgs))):
                 sequence.append(static_msgs[idx % len(static_msgs)])
                 idx += 1
-                
+
             self._static_index[drone_key] = idx % len(static_msgs)
             self._cycle_counts[drone_key] = cycle_count + 1
-            
+
         return sequence
 
     def _build_legacy_ad(self, message: bytes, counter: int) -> bytes:
@@ -347,29 +393,39 @@ class _BleBase(TransportBackend):
         raise NotImplementedError
 
     def close(self) -> None:
-        """Disable advertising and close HCI socket."""
+        """Stop the transmit thread and release the HCI socket.
+
+        Teardown (disable advertising + close socket) runs on the transmit
+        thread as it exits, so the HCI socket is never driven from two threads
+        at once. If the thread was never started, tear down here instead.
+        """
         self._running = False
+        self._opened = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
-            
+        else:
+            self._teardown_socket()
+
+    def _teardown_socket(self) -> None:
+        """Disable advertising and close the HCI socket (transmit thread)."""
         if self._sock:
             try:
                 self._disable_advertising()
             except OSError:
                 pass
-            self._sock.close()
+            try:
+                self._sock.close()
+            except Exception:
+                pass
             self._sock = None
             logger.info("BLE backend: closed HCI socket")
 
-    def remove_drone(self, drone: DroneState) -> None:
-        """Remove state for an expired drone."""
+    def _cleanup_drone(self, drone: DroneState) -> None:
+        """Release per-drone bookkeeping for an expired drone (transmit thread)."""
         drone_key = drone.serial
-        if hasattr(self, '_counters'):
-            self._counters.pop(drone_key, None)
-        if hasattr(self, '_legacy_counters'):
-            self._legacy_counters.pop(drone_key, None)
-        if hasattr(self, '_extended_counters'):
-            self._extended_counters.pop(drone_key, None)
+        self._counters.pop(drone_key, None)
+        self._legacy_counters.pop(drone_key, None)
+        self._extended_counters.pop(drone_key, None)
         self._static_index.pop(drone_key, None)
         self._cycle_counts.pop(drone_key, None)
 
@@ -450,9 +506,11 @@ class BleLegacyBackend(_BleBase):
             if not self._sock:
                 time.sleep(0.1)
                 continue
-                
-            active_drones = [d for d in self._drones if getattr(d, 'active', True)]
-            if not active_drones:
+
+            self._drain_removals()
+
+            active_packets = self._active_packets()
+            if not active_packets:
                 time.sleep(0.1)
                 continue
 
@@ -460,8 +518,7 @@ class BleLegacyBackend(_BleBase):
 
             all_sequences = []
             total_messages = 0
-            for drone in active_drones:
-                messages = self._packet_builder(drone)
+            for drone, messages in active_packets:
                 drone_key = drone.serial
                 send_sequence = self._build_send_sequence(drone_key, messages)
                 all_sequences.append((drone, send_sequence))
@@ -473,7 +530,7 @@ class BleLegacyBackend(_BleBase):
             for drone, send_sequence in all_sequences:
                 if not self._running:
                     break
-                    
+
                 drone_key = drone.serial
 
                 # Disable advertising before reconfiguring
@@ -506,6 +563,8 @@ class BleLegacyBackend(_BleBase):
                 logger.warning(f"BLE4 Legacy deadline missed! Cycle took {elapsed*1000:.2f}ms (target: 1000ms)")
             else:
                 time.sleep(1.0 - elapsed)
+
+        self._teardown_socket()
 
 
 # ── BLE 5 Extended Advertising backend ─────────────────────────────────────────
@@ -551,23 +610,50 @@ class BleExtendedBackend(_BleBase):
             self.optimize_params = optimize_params
         super().__init__(adapter, effective_extended_interval, protocol_version, fuzz_config=fuzz_config)
 
+    def start(self, drones: List[DroneState], packet_builder: PacketBuilder,
+              gen_lock: Optional[GenerationLock] = None) -> None:
+        # Acquire the socket and run the mode-based advertising init while
+        # _drones is still empty, matching the pre-refactor construction order;
+        # the per-drone mismatch re-init below then runs with drones populated.
+        self.open()
+        self._drones = drones
+        has_ext_legacy = any(getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones)
+        has_extended = any(getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones)
+        if (has_ext_legacy and self.mode == "extended") or (has_extended and self.mode == "ext-legacy"):
+            self._init_advertising()
+        super().start(drones, packet_builder, gen_lock)
+
     def _init_advertising(self) -> None:
         """Initialize extended advertising sets based on configured mode."""
         self._set_advertising_enable(False, [0x00, 0x01])
-        if self.mode in ("ext-legacy", "dual"):
+        has_ext_legacy = self.mode in ("ext-legacy", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones
+        )
+        has_extended = self.mode in ("extended", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones
+        )
+        if has_ext_legacy:
             # Handle 0: legacy PDU, 1M PHY — SID 0
             self._set_advertising_params(0x00, 0x0010, 0x01, 0x01, 0x00, interval_ms=self.legacy_interval_ms if self.optimize_params else None)
             self._last_configured_legacy_interval = self.legacy_interval_ms
-        if self.mode in ("extended", "dual"):
+        if has_extended:
             # Handle 1: extended PDU, LE Coded PHY — SID 1
             self._set_advertising_params(0x01, 0x0000, 0x03, 0x03, 0x01, interval_ms=self.advertising_interval_ms if self.optimize_params else None)
 
     def _disable_advertising(self) -> None:
         active_handles = []
-        if self.mode in ("ext-legacy", "dual"):
+        has_ext_legacy = self.mode in ("ext-legacy", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("ext-legacy", "legacy") for d in self._drones
+        )
+        has_extended = self.mode in ("extended", "dual") or any(
+            getattr(d, 'ble_mode', None) in ("extended", "ble5") for d in self._drones
+        )
+        if has_ext_legacy:
             active_handles.append(0x00)
-        if self.mode in ("extended", "dual"):
+        if has_extended:
             active_handles.append(0x01)
+        if not active_handles:
+            active_handles = [0x00, 0x01]
         self._set_advertising_enable(False, active_handles)
 
     def _set_advertising_params(self, handle: int, properties: int,
@@ -640,11 +726,11 @@ class BleExtendedBackend(_BleBase):
             pack_msgs = messages[:9]
         else:
             pack_msgs = messages
-            
+
         pack_type_ver = self.fuzz_config.get("pack_type_ver", (MsgType.PACK << 4) | self.protocol_version)
         pack_msg_size = self.fuzz_config.get("pack_msg_size", 0x19)
         msg_count = self.fuzz_config.get("pack_msg_count", len(pack_msgs) & 0xFF)
-        
+
         service_data = (
             ASTM_UUID
             + bytes([ASTM_APP_CODE, counter & 0xFF])
@@ -663,9 +749,14 @@ class BleExtendedBackend(_BleBase):
             if not self._sock:
                 time.sleep(0.1)
                 continue
-                
-            active_drones = [d for d in self._drones if getattr(d, 'active', True)]
-            if not active_drones:
+
+            self._drain_removals()
+
+            active_packets = [
+                (d, m) for d, m in self._active_packets()
+                if getattr(d, 'transport', None) in (None, "ble", "both", "all")
+            ]
+            if not active_packets:
                 time.sleep(0.1)
                 continue
 
@@ -673,12 +764,16 @@ class BleExtendedBackend(_BleBase):
 
             all_sequences = []
             total_legacy_messages = 0
-            for drone in active_drones:
-                messages = self._packet_builder(drone)
+            for drone, messages in active_packets:
                 drone_key = drone.serial
                 send_sequence = self._build_send_sequence(drone_key, messages)
                 all_sequences.append((drone, messages, send_sequence))
-                if self.mode in ("ext-legacy", "dual"):
+
+                drone_mode = getattr(drone, 'ble_mode', None)
+                if drone_mode:
+                    drone_mode = drone_mode.replace("_", "-")
+                effective_mode = drone_mode if drone_mode in ("ext-legacy", "legacy", "extended", "ble5", "dual") else self.mode
+                if effective_mode in ("ext-legacy", "legacy", "dual"):
                     total_legacy_messages += len(send_sequence)
 
             current_legacy_interval_ms = self.legacy_interval_ms
@@ -687,14 +782,19 @@ class BleExtendedBackend(_BleBase):
             for drone, messages, send_sequence in all_sequences:
                 if not self._running:
                     break
-                    
+
                 drone_key = drone.serial
 
                 if not hasattr(self, '_extended_counters'):
                     self._extended_counters = {}
                 counter = self._extended_counters.get(drone_key, 0)
 
-                if self.mode == "ext-legacy":
+                drone_mode = getattr(drone, 'ble_mode', None)
+                if drone_mode:
+                    drone_mode = drone_mode.replace("_", "-")
+                effective_mode = drone_mode if drone_mode in ("ext-legacy", "legacy", "extended", "ble5", "dual") else self.mode
+
+                if effective_mode in ("ext-legacy", "legacy"):
                     if self.optimize_params:
                         if not hasattr(self, '_last_configured_legacy_interval') or self._last_configured_legacy_interval != current_legacy_interval_ms:
                             self._set_advertising_enable(False, [0x00])
@@ -722,7 +822,7 @@ class BleExtendedBackend(_BleBase):
                         self._set_advertising_enable(False, [0x00])
                         counter = (counter + 1) & 0xFF
 
-                elif self.mode == "extended":
+                elif effective_mode in ("extended", "ble5"):
                     # Pure BT5: Extended Message Pack on Handle 1 (Coded PHY)
                     if not self.optimize_params:
                         self._set_advertising_enable(False, [0x01])
@@ -782,3 +882,5 @@ class BleExtendedBackend(_BleBase):
                 logger.warning(f"BLE ({self.mode}) deadline missed! Cycle took {elapsed*1000:.2f}ms (target: 1000ms)")
             else:
                 time.sleep(1.0 - elapsed)
+
+        self._teardown_socket()

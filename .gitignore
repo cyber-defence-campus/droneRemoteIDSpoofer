@@ -39,6 +39,7 @@ dist/
 scratch/
 NaN/
 patches/
+scanner/legacy/
 test.txt
 *.tzt
 *.code-workspace
@@ -47,7 +48,17 @@ test.txt
 *.pcap
 evaluation/data/
 evaluation/plots/
+evaluation/comparison_plots/
 plots_*/
 evaluation/*_results.json
 evaluation/*.png
 evaluation/cts_inject
+attacks/takeover/cts_inject
+*.db
+*.db-shm
+*.db-wal
+:memory:
+rid_packets*.jsonl
+
+
+*.bak*

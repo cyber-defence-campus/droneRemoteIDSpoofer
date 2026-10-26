@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drone-remote-id"
+version = "1.0.0"
+description = "Drone Remote ID (ASTM F3411 / OpenDroneID) spoofer — multi-transport Wi-Fi beacon, BLE, and Wi-Fi NAN injection"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Cyber-Defence Campus" }
+]
+keywords = ["drone", "remote-id", "astm-f3411", "opendroneid", "spoofer", "ble5", "wifi-beacon", "wifi-nan"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+]
+
+dependencies = [
+    "scapy>=2.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "build>=1.0.0",
+    "ruff>=0.17",
+]
+
+[project.scripts]
+drone-spoofer = "drone_rid_spoofer.cli:main"
+drone-replay = "replay.replay_drones:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "drone_rid_spoofer*",
+    "replay*",
+]
+exclude = [
+    "attacks*",
+    "evaluation*",
+    "scenarios*",
+    "scratch*",
+    "tests*",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+norecursedirs = ["scratch", ".venv", "build", "dist"]
+
+[tool.ruff]
+# Lint the installed packages plus the research/eval helpers; leave generated
+# and vendored trees alone.
+target-version = "py39"
+line-length = 100
+extend-exclude = [
+    "NaN",
+    "NaN_Bridge",
+    "patches",
+    "resources",
+    "scratch",
+    "central_logs",
+    "spool",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# A pragmatic core: pyflakes (F) catches real bugs, pycodestyle (E/W) the
+# obvious style slips, plus isort (I), flake8-bugbear (B) and
+# flake8-comprehensions (C4). Keep it green, then tighten later if wanted
+# (e.g. add "UP" for pyupgrade once the py39 floor is raised).
+select = ["E", "F", "W", "I", "B", "C4"]
+ignore = [
+    "E501",    # line too long — handled by the formatter, not enforced here
+    "B008",    # function call in argument default (argparse actions use this)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports

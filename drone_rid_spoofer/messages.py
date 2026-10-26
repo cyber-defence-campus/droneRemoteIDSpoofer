@@ -1,9 +1,10 @@
 import struct
 from datetime import datetime, timedelta
 from enum import IntEnum
-from typing import Tuple, List
+from typing import List, Tuple
 
 from drone_rid_spoofer.state import DroneState
+
 
 class MsgType(IntEnum):
     BASIC_ID = 0x0
@@ -61,11 +62,13 @@ def build_location_vector(lat: int, lng: int, direction: int,
     Args:
         timestamp_offset: Minutes to shift the ASTM timestamp.
             Negative values produce timestamps in the past.
-            The field wraps within the current hour (0-5999 tenth-seconds).
+            The field wraps within the current hour (0-35999 tenth-seconds).
     """
     dir_val, ew_dir = _transform_rotation(direction)
     now = datetime.now() + timedelta(minutes=timestamp_offset)
-    tenth_seconds = (now.minute * 600 + now.second * 10) % 6000
+    # ASTM F3411 Location Timestamp: tenths of a second since the top of the
+    # hour (valid 0-36000). Wrap within the full hour, not every 10 minutes.
+    tenth_seconds = (now.minute * 600 + now.second * 10 + now.microsecond // 100000) % 36000
 
     return b''.join([
         struct.pack("<B", (MsgType.LOCATION << 4) | protocol_version),
@@ -107,9 +110,14 @@ def build_self_id(description: bytes = SELF_ID_DESCRIPTION, protocol_version: in
     return header + body
 
 
-def build_operator_id(protocol_version: int = 2) -> bytes:
+def build_operator_id(operator_id: str = "", protocol_version: int = 2) -> bytes:
     """Build Message Type 5 - Operator ID (25 bytes)."""
-    return bytes([(MsgType.OPERATOR_ID << 4) | protocol_version]) + b'\x00' * 24
+    header = bytes([(MsgType.OPERATOR_ID << 4) | protocol_version, 0x00])
+    if operator_id:
+        body = operator_id.encode('ascii', errors='ignore')[:20].ljust(20, b'\x00')
+    else:
+        body = b'\x00' * 20
+    return header + body + b'\x00\x00\x00'
 
 
 def build_all_messages(drone: DroneState, protocol_version: int = 2, omit_self_id: bool = False, omit_operator_id: bool = False) -> List[bytes]:
@@ -128,8 +136,14 @@ def build_all_messages(drone: DroneState, protocol_version: int = 2, omit_self_i
         ),
     ]
     if not omit_self_id:
-        msgs.append(build_self_id(protocol_version=protocol_version))
+        desc = getattr(drone, 'description', None)
+        if desc:
+            desc_bytes = desc.encode('ascii', errors='ignore') if isinstance(desc, str) else desc
+            msgs.append(build_self_id(description=desc_bytes, protocol_version=protocol_version))
+        else:
+            msgs.append(build_self_id(protocol_version=protocol_version))
     msgs.append(build_system(drone.pilot_location[0], drone.pilot_location[1], protocol_version=protocol_version))
     if not omit_operator_id:
-        msgs.append(build_operator_id(protocol_version=protocol_version))
+        op_id = getattr(drone, 'operator_id', "")
+        msgs.append(build_operator_id(operator_id=op_id or "", protocol_version=protocol_version))
     return msgs

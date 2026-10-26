@@ -1,6 +1,6 @@
 # Scenario Config
 
-This document describes the JSON scenario file used by `spoof_drones.py`.
+This document describes the JSON scenario file used by the `drone-spoofer` CLI.
 
 Note that CLI flags override config values.
 
@@ -18,6 +18,8 @@ Note that CLI flags override config values.
 - `location` ([lat, lng]): base coordinates in decimal degrees. Default: Zurich.
 - `random` (int): number of random drones if `drones` is empty. Default: `1`.
 - `transport` (string): `"wifi"`, `"ble"`, `"nan"`, `"both"`, or `"all"`. Default: `"wifi"`.
+- `no_self_id` (bool): omit the Self ID (Type 3) message from every drone to reduce airtime and maximize concurrent drones. Default: `false`. CLI `--no-self-id` / `--self-id` override this in either direction.
+- `no_operator_id` (bool): omit the Operator ID (Type 5) message from every drone. Default: `false`. CLI `--no-operator-id` / `--operator-id` override this in either direction.
 - `ble` (object): BLE-specific settings (optional).
   - `adapter` (string): HCI adapter name. Default: `"hci0"`.
   - `mode` (string): `"extended"` (default), `"ext-legacy"`, `"legacy"`, or `"dual"`.
@@ -25,7 +27,7 @@ Note that CLI flags override config values.
   - `extended_interval_ms` (int): pulse rate for BLE 5 extended pack in ms. Default: same as `advertising_interval_ms`.
 - `wifi` (object): Wi-Fi-specific settings (optional).
   - `channel` (int): Wi-Fi channel for injection. Default: `6`.
-  - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`.
+  - `ess` (bool): Set ESS capability (make beacon look like an AP). Default: `false`. CLI `--wifi-ess` / `--no-wifi-ess` override this in either direction.
   - `beacon_interval` (number): Wi-Fi beacon transmission interval in seconds. Default: `0.1024`.
 - `nan` (object): Wi-Fi NAN/Aware settings (optional).
   - `mode` (string): `"bridge"` (Android TCP bridge) or `"manual"` (direct Linux raw packet injection). Default: `"bridge"`.
@@ -47,6 +49,9 @@ randomly (serial, MAC, and locations).
 - `pilot_location` ([lat, lng]): pilot position. Optional.
 - `lifespan_seconds` (int): stop transmitting after N seconds. Optional.
 - `transport` (string): per-drone transport override (`"wifi"`, `"ble"`, `"nan"`, `"both"`, `"all"`). Optional.
+- `ble_mode` (string): per-drone BLE mode override (`"ext-legacy"` for BLE 4 legacy advertisements via Handle 0, `"extended"` for BLE 5 extended advertising via Handle 1, or `"dual"`). Optional.
+- `description` (string): max 23 ASCII chars. Self-ID (Type 3) description text. Optional.
+- `operator_id` (string): max 20 ASCII chars. Operator ID (Type 5) string. Optional.
 - `timestamp_offset_minutes` (number): shift the ASTM Location timestamp by this many minutes. Negative values produce timestamps in the past (e.g., `-5` = 5 minutes ago). Wraps within the hour. Default: `0`. Optional.
 - `speed` (number): horizontal speed in m/s. Default: random in `[0, 25]`. Optional.
 - `vertical_speed` (number): vertical speed in m/s, positive = climbing. Default: random in `[-5, 5]`. Optional.
