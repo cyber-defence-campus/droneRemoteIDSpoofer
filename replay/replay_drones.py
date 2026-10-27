@@ -221,12 +221,62 @@ class SingleShotNan:
             pass
 
 
+CORRUPTED_ANOMALIES = {"ble_crc_bad", "wifi_fcs_bad"}
+
+
+def select_events(events, encounter=None, mac=None, from_ts=None, to_ts=None, include_corrupted=False):
+    """
+    Selects the records to replay and gives each its time_offset_ms.
+
+    Replay files carry time_offset_ms. RID_Scanner packet logs (one file per day, all nodes and
+    transmitters) carry the absolute reception time instead: their records are filtered (encounter,
+    MAC, time window; copies of a frame received by another node and, by default, frames with a
+    failed CRC/FCS are skipped), ordered by reception time, and timed relative to the first one.
+    """
+    selected = []
+    for e in events:
+        if encounter is not None and e.get("encounter_id") != encounter:
+            continue
+        if mac is not None and str(e.get("mac") or "").upper() != mac.upper():
+            continue
+        if e.get("duplicate_of_other_node"):
+            continue
+        if not include_corrupted and CORRUPTED_ANOMALIES & set(e.get("anomalies") or []):
+            continue
+        ts = e.get("timestamp")
+        if (from_ts is not None or to_ts is not None) and not isinstance(ts, (int, float)):
+            continue
+        if from_ts is not None and ts < from_ts:
+            continue
+        if to_ts is not None and ts > to_ts:
+            continue
+        selected.append(e)
+
+    if selected and all("time_offset_ms" not in e for e in selected):
+        timed = [e for e in selected if isinstance(e.get("timestamp"), (int, float))]
+        if len(timed) < len(selected):
+            logging.warning(f"Skipped {len(selected) - len(timed)} record(s) without a reception time.")
+        timed.sort(key=lambda e: e["timestamp"])
+        if timed:
+            t0 = timed[0]["timestamp"]
+            for e in timed:
+                e["time_offset_ms"] = int(round((e["timestamp"] - t0) * 1000))
+        selected = timed
+    return selected
+
+
 def main():
     parser = argparse.ArgumentParser(description="Replay extracted ASTM payloads.")
     parser.add_argument("jsonl_file", help="Input JSONL replay file")
     parser.add_argument("--transport", help="Override transport (wifi, bt4, bt5, nan, original)", default="original")
     parser.add_argument("--wifi-iface", default="wlan1", help="Wi-Fi Interface (default: wlan1)")
     parser.add_argument("--ble-adapter", default="hci0", help="BLE adapter (default: hci0)")
+    parser.add_argument("--encounter", help="Only records of this encounter_id (RID_Scanner packet logs)")
+    parser.add_argument("--mac", help="Only records of this transmitter MAC address")
+    parser.add_argument("--from", dest="from_ts", type=float, help="Only records received at or after this epoch time")
+    parser.add_argument("--to", dest="to_ts", type=float, help="Only records received at or before this epoch time")
+    parser.add_argument("--include-corrupted", action="store_true",
+                        help="Also replay records with a failed CRC/FCS (skipped by default)")
     args = parser.parse_args()
 
     events = []
@@ -234,6 +284,7 @@ def main():
         for line in f:
             if line.strip():
                 events.append(json.loads(line))
+    events = select_events(events, args.encounter, args.mac, args.from_ts, args.to_ts, args.include_corrupted)
 
     if not events:
         logging.error("No events found in file.")

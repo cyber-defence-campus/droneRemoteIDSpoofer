@@ -68,7 +68,16 @@ sudo .venv/bin/python3 replay/replay_drones.py replay/captured_flight2.jsonl
 
 # Force cross-transport replay (e.g. replay Wi-Fi capture over BLE 5)
 sudo .venv/bin/python3 replay/replay_drones.py replay/captured_flight2.jsonl --transport bt5
+
+# Replay one encounter straight from an RID_Scanner packet log (rid_packets_YYYYMMDD.jsonl)
+sudo .venv/bin/python3 replay/replay_drones.py rid_packets_YYYYMMDD.jsonl --encounter <encounter_id>
 ```
+
+RID_Scanner packet logs hold all nodes and transmitters of a day and carry the absolute reception
+time (`timestamp`) instead of `time_offset_ms`. Their records are filtered with the options below,
+ordered by reception time and replayed relative to the first selected one. Copies of a frame that
+another node received (`duplicate_of_other_node`) are always skipped, and frames with a failed
+CRC/FCS unless `--include-corrupted` is given. Files that carry `time_offset_ms` replay as before.
 
 ### Command Line Options
 
@@ -78,6 +87,10 @@ sudo .venv/bin/python3 replay/replay_drones.py replay/captured_flight2.jsonl --t
 | `-t`, `--transport` | `wifi\|bt4\|bt5\|nan\|original` | `original` | Target transport medium override |
 | `-w`, `--wifi-iface` | `str` | `wlan1` | Wi-Fi interface for injection |
 | `-b`, `--ble-adapter` | `str` | `hci0` | BLE HCI adapter name |
+| `--encounter` | `str` | | Only records of this `encounter_id` (packet logs) |
+| `--mac` | `str` | | Only records of this transmitter MAC address |
+| `--from`, `--to` | `epoch s` | | Only records received within this time window |
+| `--include-corrupted` | | off | Also replay records with a failed CRC/FCS |
 | `--nan-port` | `int` | `8080` | TCP port for Android NAN Bridge |
 | `--speed` | `float` | `1.0` | Playback speed multiplier (e.g. `2.0` for 2x speed) |
 
