@@ -32,7 +32,7 @@ Note that CLI flags override config values.
 - `nan` (object): Wi-Fi NAN/Aware settings (optional).
   - `mode` (string): `"bridge"` (Android TCP bridge) or `"manual"` (direct Linux raw packet injection). Default: `"bridge"`.
   - `port` (int): TCP port to connect to the Android NAN Bridge when `mode` is `"bridge"`. Default: `8080`.
-  - `cluster_id` (string): NAN Cluster BSSID MAC address for `manual` injection mode. Default: `"50:6f:9a:01:00:00"`.
+  - `cluster_id` (string): NAN Cluster BSSID MAC address for `manual` injection mode. Default: `"50:6f:9a:01:00:ff"`.
   - `instance_id` (int or hex string): Transmitted Service Instance ID byte for `manual` injection mode (e.g. `16` or `"0x10"`). Default: `16` (`0x10`).
 
 ## Drone fields

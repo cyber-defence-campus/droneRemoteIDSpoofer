@@ -98,7 +98,7 @@ Operates directly over Linux raw HCI sockets (`AF_BLUETOOTH`, `BTPROTO_HCI`):
 
 #### **Wi-Fi NAN / Aware (`transport/nan.py`)**
 - **`NanBridgeBackend`**: Forwards ODID Message Packs over TCP (default port `8080`) to an Android device running the `NaN_Bridge` app via `adb forward`.
-- **`NanManualBackend`**: Directly injects raw IEEE 802.11 NAN Action Frames and Discovery Beacons on channel 6 (2437 MHz) via `AF_PACKET`. Encapsulates messages in NAN Service Descriptor Attributes (SDA) with NAN Cluster BSSID `50:6f:9a:01:00:00` and Service Info OUI `FA:0B:BC`.
+- **`NanManualBackend`**: Directly injects raw IEEE 802.11 NAN Action Frames and Discovery Beacons on channel 6 (2437 MHz) via `AF_PACKET`. Encapsulates messages in NAN Service Descriptor Attributes (SDA) with NAN Cluster BSSID `50:6f:9a:01:00:ff` and Service Info OUI `FA:0B:BC`.
 
 ---
 

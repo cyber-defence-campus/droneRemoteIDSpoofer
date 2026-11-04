@@ -233,7 +233,7 @@ class NanManualBackend(TransportBackend):
     """
 
     NAN_SERVICE_NAME = b"org.opendroneid.remoteid"
-    DEFAULT_CLUSTER_ID = "50:6f:9a:01:00:00"
+    DEFAULT_CLUSTER_ID = "50:6f:9a:01:00:ff"
 
     def __init__(
         self,
@@ -241,7 +241,7 @@ class NanManualBackend(TransportBackend):
         protocol_version: int = 2,
         channel: int = 6,
         cluster_id: str = DEFAULT_CLUSTER_ID,
-        instance_id: int = 0x10,
+        instance_id: int = 0x01,
         rate_mbps: float = 1.0,
         update_interval: float = 1.0,
         fuzz_config: Optional[dict] = None,
@@ -257,8 +257,8 @@ class NanManualBackend(TransportBackend):
 
         self.cluster_bssid = bytes.fromhex(self.cluster_id_str.replace(":", ""))
         if len(self.cluster_bssid) != 6:
-            logger.warning(f"Invalid cluster ID format {self.cluster_id_str}, falling back to default 50:6f:9a:01:00:00")
-            self.cluster_bssid = bytes.fromhex("506f9a010000")
+            logger.warning(f"Invalid cluster ID format {self.cluster_id_str}, falling back to default 50:6f:9a:01:00:ff")
+            self.cluster_bssid = bytes.fromhex("506f9a0100ff")
 
         self.service_id_hash = hashlib.sha256(self.NAN_SERVICE_NAME).digest()[:6]
 
@@ -341,12 +341,12 @@ class NanManualBackend(TransportBackend):
         fixed_params = timestamp_bytes + beacon_interval_bytes + capabilities
 
         # 3. Wi-Fi Aware Vendor Specific IE (OUI 50:6F:9A, Type 0x13)
-        # Master Indication Attribute (Attr ID 0, length 2, Pref 254, Random 0xDF)
-        master_ind = b"\x00\x02\x00\xfe\xdf"
+        # Master Indication Attribute (Attr ID 0, length 2, Pref 254, Random 0xEA)
+        master_ind = b"\x00\x02\x00\xfe\xea"
 
         # NAN Cluster Attribute (Attr ID 1, length 13)
         ambtt_bytes = (ambtt_us & 0xFFFFFFFF).to_bytes(4, "little", signed=False)
-        nan_cluster_attr = b"\x01\x0d\x00" + drone_mac + b"\xdf\xfe\x00" + ambtt_bytes
+        nan_cluster_attr = b"\x01\x0d\x00" + drone_mac + b"\xea\xfe\x00" + ambtt_bytes
 
         # Country Code Attribute (Attr ID 11, length 2, "CH")
         country_code = b"\x0b\x02\x00CH"
@@ -376,7 +376,9 @@ class NanManualBackend(TransportBackend):
         """Construct raw NAN Service Discovery Frame (SDF) with dynamic SDEA Service Update Indicator."""
         # 1. 802.11 MAC Header (24 bytes) - Action Frame (Subtype 13)
         fc_duration = b"\xd0\x00\x00\x00"
-        dest_addr = b"\xff\xff\xff\xff\xff\xff"
+        # NAN Network ID (NAN spec v3.0 Sec 2.8.1): SDFs are addressed to the
+        # NAN group address 51:6F:9A:01:00:00, not generic broadcast.
+        dest_addr = b"\x51\x6f\x9a\x01\x00\x00"
         seq_ctrl = (seq_num << 4).to_bytes(2, "little")
         mac_header = fc_duration + dest_addr + drone_mac + self.cluster_bssid + seq_ctrl
 
