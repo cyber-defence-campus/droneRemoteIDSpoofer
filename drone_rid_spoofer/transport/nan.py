@@ -425,6 +425,9 @@ class NanManualBackend(TransportBackend):
 
         # 512 TU epoch = 524,288 us = 0.524288 seconds
         TSF_EPOCH_US = 524288
+        # 16 TU Discovery Window. SDFs must clear this window or receivers,
+        # whose radios are only awake during the DW, never hear them.
+        DW_DURATION_US = 16384
         target_offsets_us = [0, 105000, 210000, 315000, 420000]
         slot = 0
         loop_counter = 0
@@ -440,8 +443,9 @@ class NanManualBackend(TransportBackend):
                     current_epoch += 1
                     target_time_us = (current_epoch * TSF_EPOCH_US) + target_offsets_us[slot]
                 else:
-                    self.missed_deadlines += 1
-                    logger.debug(f"NAN slot {slot} deadline missed")
+                    # Inter-DW discovery beacon slots run outside the DW, so a
+                    # late one is still received: skip ahead without counting it
+                    # as a miss (only DW overruns lose frames).
                     slot = (slot + 1) % len(target_offsets_us)
                     continue
 
@@ -503,6 +507,14 @@ class NanManualBackend(TransportBackend):
 
                     seq_num = (seq_num + 1) % 4096
                     self._seq_nums[serial] = seq_num
+
+            # DW deadline (matches the "did the cycle finish on time" metric
+            # used by the other transports): if the per-drone slot-0 work pushed
+            # the last SDF past the 16 TU window end, receivers were already
+            # asleep and the frame is lost. Count one miss per overrun epoch.
+            if slot == 0 and int(time.time() * 1_000_000) > (current_epoch * TSF_EPOCH_US) + DW_DURATION_US:
+                self.missed_deadlines += 1
+                logger.debug("NAN SDF missed Discovery Window end")
 
             # Advance slot state
             slot = (slot + 1) % len(target_offsets_us)
