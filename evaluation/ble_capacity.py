@@ -76,9 +76,11 @@ class NrfSnifferThread(threading.Thread):
         subprocess.run(["killall", "-9", "nrfutil", "nrfutil-ble-sniffer", "nrfutil-ble-sni"], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
         time.sleep(0.5)
 
+        # Vendored direct-UART nRF sniffer (RID_Scanner), run as a module so its
+        # relative imports resolve. cwd is the repo root (parent of evaluation/).
         eval_dir = os.path.dirname(os.path.abspath(__file__))
-        nrf_script = os.path.join(eval_dir, "nrf_bt_sniffer_json.py")
-        cmd = [sys.executable, nrf_script]
+        repo_root = os.path.dirname(eval_dir)
+        cmd = [sys.executable, "-m", "evaluation.nrf_sniffer.sniffers.nrf_bt_sniffer_json"]
         if self.nrf_port:
             cmd.extend(["--nrf-port", self.nrf_port])
         elif self.rx_pcap and os.path.exists(self.rx_pcap):
@@ -86,23 +88,21 @@ class NrfSnifferThread(threading.Thread):
 
         cmd.append("--only-rid")  # Ensure we only process packets containing valid ASTM Remote ID payload data
 
-        # Map sniffer mode to nrf_bt_sniffer_json.py's --ble-mode
-        # Note: nrf_bt_sniffer_json.py already adds --coded to nrfutil when in BT5 mode.
+        # Map sniffer mode to the vendored CLI's --ble-mode {hop,extended,ble5,legacy,ble4}.
+        # The firmware switches PHY on a single command (~1ms); dwell times only matter for hop.
         if self.ble_mode in ("ble5", "extended", "pure_bt5", "bt5"):
-            cmd.extend(["--ble-mode", "extended", "-b"])
+            cmd.extend(["--ble-mode", "extended"])
         elif self.ble_mode in ("ble4", "legacy"):
             cmd.extend(["--ble-mode", "legacy"])
-        elif self.ble_mode in ("hop", "dual"):
+        elif self.ble_mode in ("hop", "dual", "all"):
             cmd.extend(["--ble-mode", "hop"])
-        elif self.ble_mode == "all":
-            cmd.extend(["--ble-mode", "all"])
 
         if self.filter_channels:
             cmd.extend(["--filter-channel", *map(str, self.filter_channels)])
 
         try:
             # Redirect stdout to pipe to read stream of JSON lines; stderr remains attached for synchronization messages
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=sys.stderr, start_new_session=True)
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=sys.stderr, start_new_session=True, cwd=repo_root)
             self.ready = True
 
             while self.running and self.proc.poll() is None:
@@ -178,8 +178,9 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
     backend.build_times = []
     backend.loop_times = []
     backend.missed_deadlines = 0
+    backend.tx_aborted = None
     backend.packets_transmitted: Dict[str, List[float]] = {mac.upper(): [] for mac in active_macs}
-    backend.expected_records: List[Tuple[int, float, str, str]] = []
+    backend.expected_records: List[Tuple[int, float, str, str, str]] = []
     backend.tx_records: List[Tuple[int, float, str, str]] = []
     backend.buffered_tx_packets = []
     backend.lock = threading.Lock()
@@ -252,7 +253,7 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
         return res
     backend._set_advertising_enable = patched_set_adv_enable
 
-    def patched_transmit_loop():
+    def _ptl_body():
         while backend._running:
             if not backend._sock:
                 time.sleep(0.1)
@@ -320,7 +321,7 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
                             legacy_ad = backend._build_legacy_ad(msg, counter)
                             backend._set_advertising_data(0x00, legacy_ad)
                             with backend.lock:
-                                backend.expected_records.append((cycle_idx, time.time(), mac_upper, mtype))
+                                backend.expected_records.append((cycle_idx, time.time(), mac_upper, mtype, "legacy"))
                             backend._set_advertising_enable(True, [0x00])
                             time.sleep(dynamic_legacy_dwell)
                             backend._set_advertising_enable(False, [0x00])
@@ -336,7 +337,7 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
                         backend._set_advertising_data(0x01, pack_ad)
                         backend._flush_adv_terminated_events(0x01)
                         with backend.lock:
-                            backend.expected_records.append((cycle_idx, time.time(), mac_upper, "Message Pack"))
+                            backend.expected_records.append((cycle_idx, time.time(), mac_upper, "Message Pack", "extended"))
                         backend._set_advertising_enable(True, [0x01], max_events=1)
                         timeout_s = max(0.2, (backend.advertising_interval_ms / 1000.0) * 1.5)
                         backend._wait_for_adv_terminated(0x01, timeout=timeout_s)
@@ -360,7 +361,7 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
                         pack_ad = backend._build_message_pack_ad(messages, counter)
                         backend._set_advertising_data(0x01, pack_ad)
                         with backend.lock:
-                            backend.expected_records.append((cycle_idx, time.time(), mac_upper, "Message Pack"))
+                            backend.expected_records.append((cycle_idx, time.time(), mac_upper, "Message Pack", "extended"))
                         backend._set_advertising_enable(True, [0x01])
                         for msg in send_sequence:
                             if not backend._running:
@@ -370,7 +371,7 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
                             legacy_ad = backend._build_legacy_ad(msg, counter)
                             backend._set_advertising_data(0x00, legacy_ad)
                             with backend.lock:
-                                backend.expected_records.append((cycle_idx, time.time(), mac_upper, mtype))
+                                backend.expected_records.append((cycle_idx, time.time(), mac_upper, mtype, "legacy"))
                             backend._set_advertising_enable(True, [0x00])
                             time.sleep(dynamic_legacy_dwell)
                             backend._set_advertising_enable(False, [0x00])
@@ -397,7 +398,7 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
                         backend._current_msg_type_name = mtype
                         backend._set_advertising_data(msg, counter)
                         with backend.lock:
-                            backend.expected_records.append((cycle_idx, time.time(), mac_upper, mtype))
+                            backend.expected_records.append((cycle_idx, time.time(), mac_upper, mtype, "legacy"))
                         backend._set_advertising_enable(True)
                         time.sleep(dwell_time)
                         backend._set_advertising_enable(False)
@@ -417,6 +418,21 @@ def instrument_backend(backend, active_macs: Optional[List[str]] = None, max_cyc
                 for d in getattr(backend, '_drones', []):
                     d.active = False
                 break
+    def patched_transmit_loop():
+        # Resilience: a mid-run HCI socket failure (BrokenPipeError / OSError when the TX adapter
+        # drops under load) must not kill this control thread and let the spoofer's outer loop run
+        # away uncontrolled. Catch it, flag the run as TX-aborted, and tear the run down cleanly so
+        # the sweep can record a failed point and move on.
+        try:
+            _ptl_body()
+        except (BrokenPipeError, OSError) as e:
+            backend.tx_aborted = f"{type(e).__name__}: {e}"
+            logger.error(f"BLE transmit loop aborted ({backend.tx_aborted}); ending this run cleanly.")
+        finally:
+            backend._running = False
+            for d in getattr(backend, '_drones', []):
+                d.active = False
+
     backend._transmit_loop = patched_transmit_loop
 
 
@@ -454,8 +470,11 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
 
     # Calculate exact target evaluation cycles plus 2 buffer cycles
     target_cycles = int(round(duration / interval)) + 2
-    # Set wall-clock lifespan ceiling to a generous safety duration so evaluation is governed strictly by loop cycle count
-    safety_duration = max(300.0, (duration + (2.0 * interval)) * 5.0)
+    # Wall-clock lifespan ceiling. Normally the cycle counter (max_cycles) stops the run; this is
+    # only a safety net, kept just above the eval window (target cycles + a short margin) so that if
+    # the transmit loop ever stalls the spoofer's main loop still stops promptly instead of running
+    # for minutes (the old 300 s ceiling caused the jam/sweep runs to overrun on a stalled loop).
+    safety_duration = target_cycles * interval + max(10.0, 5.0 * interval)
     drones_config = []
     base_lat, base_lng = args.location
     for _ in range(num_drones):
@@ -534,8 +553,8 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
     mac_to_serial: Dict[str, str] = getattr(backend, 'registered_drones', {})
 
     # Strictly select expected records and tx transmissions belonging to our target evaluation cycles (0 to num_buckets - 1)
-    valid_expected = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'expected_records', []) if 0 <= cyc < num_buckets]
-    valid_tx = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'tx_records', []) if 0 <= cyc < num_buckets]
+    valid_expected = [(ts, mac, mtype, cyc, stream) for cyc, ts, mac, mtype, stream in getattr(backend, 'expected_records', []) if 0 <= cyc < num_buckets]
+    valid_tx = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype, *_ in getattr(backend, 'tx_records', []) if 0 <= cyc < num_buckets]
 
     expected_by_mac: Dict[str, int] = dict.fromkeys(mac_to_serial.keys(), 0)
     msg_type_stats: Dict[str, Dict[str, int]] = {}
@@ -547,16 +566,34 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
     tx_buckets = [0] * num_buckets
     rx_buckets = [0] * num_buckets
 
-    for ts, mac, mtype, cyc in valid_expected:
+    # Per-PHY-stream expected counts. In dual/ext-legacy mode the TX emits a BLE4 legacy stream
+    # and/or a BLE5 extended stream; a single nRF sniffer only hears one at a time, so RX PDR must
+    # be taken against the expected count of the stream actually being sniffed (not both streams).
+    # The stream the sniffer is actually listening to this run
+    active_rx_stream = "extended" if active_rx_mode == "ble5" else "legacy"
+    expected_by_stream: Dict[str, int] = {"legacy": 0, "extended": 0}
+    # Per-cycle delivery units for the sniffed stream: (mac, cycle) -> received?. Used only in
+    # multi-stream (dual) mode, where RX is a liveness sanity check and a raw reception count would
+    # exceed the per-cycle expected count (the dual extended pack free-runs and is heard many times
+    # per cycle). Keyed per cycle so the ratio is a true <=100% "was this drone heard this second".
+    rx_stream_units: Dict[tuple, bool] = {}
+    rx_stream_exp_ts: Dict[str, list] = {}
+    for ts, mac, mtype, cyc, stream in valid_expected:
         if mac in expected_by_mac:
             expected_by_mac[mac] += 1
         if mtype not in msg_type_stats:
             msg_type_stats[mtype] = get_stat_dict()
         msg_type_stats[mtype]["expected"] += 1
+        if stream in expected_by_stream:
+            expected_by_stream[stream] += 1
         if 0 <= cyc < num_buckets:
             expected_buckets[cyc] += 1
+        if stream == active_rx_stream and mac in mac_to_serial and 0 <= cyc < num_buckets:
+            rx_stream_units[(mac, cyc)] = False
+            rx_stream_exp_ts.setdefault(mac, []).append((ts, cyc))
 
     expected_total_packets = sum(expected_by_mac.values())
+    expected_rx_stream_packets = expected_by_stream.get(active_rx_stream, 0)
 
     # Filter HCI transmissions to target evaluation cycles
     filtered_tx: Dict[str, List[float]] = {mac: [] for mac in mac_to_serial.keys()}
@@ -670,7 +707,32 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
 
     avg_jitter = statistics.mean(jitter_list) / 1000.0 if jitter_list else 0.0
     pdr_tx = (total_tx_received / expected_total_packets * 100.0) if expected_total_packets > 0 else 0.0
+    # Legacy (both-stream) RX PDR, kept for back-compat; structurally capped in dual mode.
     pdr_rx = (total_rx_received / expected_total_packets * 100.0) if expected_total_packets > 0 else 0.0
+    # RX PDR for the one stream the sniffer heard. RX is a liveness/sanity check that packets
+    # reached the air (see also drones_with_rx / rx_received_packets).
+    multi_stream = expected_by_stream["legacy"] > 0 and expected_by_stream["extended"] > 0
+    if multi_stream:
+        # Dual: mark each sniffed-stream (mac, cycle) unit delivered if >=1 reception for that mac
+        # falls in its cycle window; ratio is then a true <=100% per-cycle delivery.
+        if rx_sniffer:
+            with rx_sniffer.lock:
+                for rec in rx_sniffer.raw_records:
+                    mac = rec.get("mac", "").upper()
+                    exp_ts_list = rx_stream_exp_ts.get(mac)
+                    if not exp_ts_list:
+                        continue
+                    ts_rx = rec.get("timestamp", 0)
+                    for ets, cyc in exp_ts_list:
+                        if ets - 0.05 <= ts_rx <= ets + interval:
+                            rx_stream_units[(mac, cyc)] = True
+                            break
+        expected_rx_stream_packets = len(rx_stream_units)
+        rx_stream_delivered = sum(1 for v in rx_stream_units.values() if v)
+        pdr_rx_stream = (rx_stream_delivered / expected_rx_stream_packets * 100.0) if expected_rx_stream_packets > 0 else 0.0
+    else:
+        # Single stream: all expected belongs to the sniffed stream, so this equals pdr_rx.
+        pdr_rx_stream = (total_rx_received / expected_rx_stream_packets * 100.0) if expected_rx_stream_packets > 0 else 0.0
 
     complete_pack_ratio = (total_complete_packs / expected_total_packets * 100.0) if expected_total_packets > 0 else 0.0
     drones_with_rx = sum(1 for mac, counts in drone_payload_counts.items() if counts["total_rx"] > 0 or len(matched_rx_by_mac.get(mac, [])) > 0)
@@ -727,8 +789,13 @@ def run_experiment(tx_adapter: str, ble_mode: str, rx_pcap: Optional[str], nrf_p
         "tx_received_packets": total_tx_received,
         "rx_received_packets": total_rx_received,
         "drones_with_rx": drones_with_rx,
+        "tx_aborted": getattr(backend, 'tx_aborted', None),
         "pdr_tx_percent": pdr_tx,
         "pdr_rx_percent": pdr_rx,
+        "pdr_rx_total_percent": pdr_rx,
+        "pdr_rx_stream_percent": pdr_rx_stream,
+        "rx_stream": active_rx_stream,
+        "expected_rx_stream_packets": expected_rx_stream_packets,
         "complete_pack_ratio_percent": complete_pack_ratio,
         "total_complete_packs": total_complete_packs,
         "avg_jitter_ms": avg_jitter * 1000,
@@ -839,6 +906,12 @@ def main():
     results = []
     consecutive_full_misses = 0
     target_cycles = int(round(args.duration / args.interval))
+    # Agreement cross-check: the drone count where the sender first slips a deadline vs where the
+    # sniffed-stream RX PDR first degrades. For a lossless sender these two knees should coincide.
+    sender_knee = None
+    rx_knee = None
+    rx_degrade_threshold = 95.0
+    consecutive_run_failures = 0
 
     def flush_results_to_disk():
         out_payload = results
@@ -877,29 +950,56 @@ def main():
 
     try:
         for idx, count in enumerate(drone_counts):
-            res = run_experiment(
-                tx_adapter=args.tx_adapter,
-                ble_mode=mode,
-                rx_pcap=args.rx_pcap,
-                nrf_port=args.nrf_port,
-                rx_adapter=args.rx_adapter,
-                num_drones=count,
-                duration=args.duration,
-                interval=args.interval,
-                ble_interval_ms=args.ble_interval_ms,
-                legacy_interval_ms=args.legacy_interval_ms,
-                extended_interval_ms=args.extended_interval_ms,
-                no_self_id=args.no_self_id,
-                no_operator_id=args.no_operator_id,
-                print_live=args.debug_sniff,
-                optimize_params=args.optimize_params,
-                rx_mode=args.rx_mode,
-                filter_channels=args.filter_channels
-            )
+            try:
+                res = run_experiment(
+                    tx_adapter=args.tx_adapter,
+                    ble_mode=mode,
+                    rx_pcap=args.rx_pcap,
+                    nrf_port=args.nrf_port,
+                    rx_adapter=args.rx_adapter,
+                    num_drones=count,
+                    duration=args.duration,
+                    interval=args.interval,
+                    ble_interval_ms=args.ble_interval_ms,
+                    legacy_interval_ms=args.legacy_interval_ms,
+                    extended_interval_ms=args.extended_interval_ms,
+                    no_self_id=args.no_self_id,
+                    no_operator_id=args.no_operator_id,
+                    print_live=args.debug_sniff,
+                    optimize_params=args.optimize_params,
+                    rx_mode=args.rx_mode,
+                    filter_channels=args.filter_channels
+                )
+            except Exception as e:
+                # A run can fail hard if the TX adapter wedges (e.g. 'hciconfig <a> up' non-zero
+                # after a mid-run HCI drop). Don't crash the whole sweep: try to reset the adapter
+                # and continue; bail only after several consecutive failures.
+                consecutive_run_failures += 1
+                logger.error(f"BLE {count} drones: run FAILED ({type(e).__name__}: {e}). "
+                             f"Consecutive failures: {consecutive_run_failures}.")
+                try:
+                    subprocess.run(["hciconfig", args.tx_adapter, "down"], check=False,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["hciconfig", args.tx_adapter, "up"], check=False,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    time.sleep(2.0)
+                    logger.info(f"Attempted reset of {args.tx_adapter} before continuing.")
+                except Exception:
+                    pass
+                if consecutive_run_failures >= 3:
+                    logger.error("3 consecutive run failures; aborting sweep (adapter likely unrecoverable).")
+                    break
+                continue
+            consecutive_run_failures = 0
             results.append(res)
             flush_results_to_disk()
 
             missed = res.get("performance", {}).get("missed_deadlines", 0)
+            pdr_stream = res.get("pdr_rx_stream_percent", 100.0)
+            if sender_knee is None and missed > 0:
+                sender_knee = count
+            if rx_knee is None and pdr_stream < rx_degrade_threshold:
+                rx_knee = count
             if missed >= target_cycles:
                 consecutive_full_misses += 1
                 logger.warning(f"BLE {count} drones: 100% of deadlines missed ({missed}/{target_cycles} cycles). Consecutive full-miss runs: {consecutive_full_misses}/{args.consecutive_misses}")
@@ -921,6 +1021,13 @@ def main():
 
     flush_results_to_disk()
     logger.info(f"Saved BLE capacity results to {args.out}")
+    # Report whether the sender-deadline knee and the RX-stream-degradation knee agree.
+    agree = (sender_knee is not None and rx_knee is not None and abs(sender_knee - rx_knee) <= 1)
+    logger.info(
+        f"Knee cross-check (rx stream '{args.rx_mode}'): sender first slips a deadline at "
+        f"{sender_knee} drone(s); RX stream PDR first drops below {rx_degrade_threshold:.0f}% at "
+        f"{rx_knee} drone(s). {'Agree (within 1 drone).' if agree else 'See per-run metrics.'}"
+    )
 
     # Print Summary Table
     print("\n" + "="*130)
