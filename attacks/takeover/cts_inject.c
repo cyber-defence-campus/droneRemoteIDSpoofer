@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
     }
 
     // 3. Handle Duration (Optional, Default: 32767)
-    uint16_t duration_us = 32767; 
+    uint16_t duration_us = 1500; 
     if (argc == 4) {
         int input_duration = atoi(argv[3]);
         if (input_duration < 0 || input_duration > 32767) {
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
         // placeholder: wait until the CTS duration is over
         struct timespec ts;
         ts.tv_sec = 0;
-        ts.tv_nsec = duration_us * 1000;
+        ts.tv_nsec = duration_us * 700;
         nanosleep(&ts, NULL);
     
     }
