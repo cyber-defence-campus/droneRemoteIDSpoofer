@@ -83,7 +83,7 @@ class SpooferConfig:
     # NAN
     nan_port: int = 8080
     nan_mode: str = "bridge"
-    nan_cluster_id: str = "50:6f:9a:01:00:00"
+    nan_cluster_id: str = "50:6f:9a:01:00:ff"
     nan_instance_id: int = 0x10
 
     @classmethod
@@ -128,7 +128,7 @@ class SpooferConfig:
             nan_port=int(_resolve(args.nan_port, nan, "port", 8080, int)),
             nan_mode=str(_resolve(args.nan_mode, nan, "mode", "bridge")),
             nan_cluster_id=str(_resolve(
-                args.nan_cluster_id, nan, "cluster_id", "50:6f:9a:01:00:00")),
+                args.nan_cluster_id, nan, "cluster_id", "50:6f:9a:01:00:ff")),
             nan_instance_id=cls._resolve_instance_id(args.nan_instance_id, nan),
             mac=getattr(args, "mac", None),
             ble_mac=getattr(args, "ble_mac", None),

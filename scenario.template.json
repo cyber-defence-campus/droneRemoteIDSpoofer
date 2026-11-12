@@ -17,7 +17,7 @@
     },
     "nan": {
       "mode": "manual",
-      "cluster_id": "50:6f:9a:01:00:00",
+      "cluster_id": "50:6f:9a:01:00:ff",
       "instance_id": "0x10"
     }
   },

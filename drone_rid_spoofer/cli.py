@@ -91,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nan-mode", type=str, default=None, choices=["bridge", "manual"],
                         help="NAN transport backend mode: 'bridge' (Android TCP bridge) or 'manual' (Linux raw packet injection) (default: bridge)")
     parser.add_argument("--nan-cluster-id", type=str, default=None,
-                        help="NAN cluster BSSID MAC string for manual injection mode (default: 50:6f:9a:01:00:00)")
+                        help="NAN cluster BSSID MAC string for manual injection mode (default: 50:6f:9a:01:00:ff)")
     parser.add_argument("--nan-instance-id", type=lambda x: int(x, 0), default=None,
                         help="Transmitted Service Instance ID byte for manual injection mode (default: 0x10)")
 
@@ -163,7 +163,7 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                     wifi_ess: bool = False,
                     wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024,
                     nan_port: int = 8080, nan_mode: str = "bridge",
-                    nan_cluster_id: str = "50:6f:9a:01:00:00",
+                    nan_cluster_id: str = "50:6f:9a:01:00:ff",
                     nan_instance_id: int = 0x10,
                     update_interval: float = 1.0) -> List[TransportBackend]:
     """Create transport backend instances based on configuration.
