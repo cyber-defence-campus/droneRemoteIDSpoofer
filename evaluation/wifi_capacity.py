@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -149,6 +150,7 @@ def instrument_backend(backend: WifiBackend, active_macs: Optional[List[str]] = 
     backend.current_cycle = 0
     backend.max_cycles = max_cycles
     backend.registered_drones = {}
+    backend.tx_aborted = None
 
     orig_start = getattr(backend, 'start', None)
     if orig_start and callable(orig_start):
@@ -163,7 +165,7 @@ def instrument_backend(backend: WifiBackend, active_macs: Optional[List[str]] = 
             return orig_start(drones, packet_builder, *a, **kw)
         backend.start = patched_start
 
-    def patched_transmit_loop():
+    def _wifi_ptl_body():
         while backend._running and not backend._drones:
             time.sleep(0.01)
 
@@ -287,10 +289,24 @@ def instrument_backend(backend: WifiBackend, active_macs: Optional[List[str]] = 
                 for d in getattr(backend, '_drones', []):
                     d.active = False
                 break
+    def patched_transmit_loop():
+        # Resilience: an AF_PACKET send failure (e.g. the TX iface going down under a conflicting
+        # monitor sniffer) must not kill this thread and leave the spoofer's main loop running to
+        # the drone lifespan ceiling. Catch it, flag the run, and stop cleanly.
+        try:
+            _wifi_ptl_body()
+        except Exception as e:
+            backend.tx_aborted = f"{type(e).__name__}: {e}"
+            logger.error(f"Wi-Fi transmit loop aborted ({backend.tx_aborted}); ending this run cleanly.")
+        finally:
+            backend._running = False
+            for d in getattr(backend, '_drones', []):
+                d.active = False
+
     backend._transmit_loop = patched_transmit_loop
 
 
-def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: float, interval: float, rate_mbps: float = 1.0, no_self_id: bool = True, no_operator_id: bool = False, channel: int = 6):
+def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: float, interval: float, rate_mbps: float = 1.0, no_self_id: bool = True, no_operator_id: bool = False, channel: int = 6, tx_power_mbm: int = 2000):
     args = argparse.Namespace(
         interface=tx_iface,
         manual=False,
@@ -305,17 +321,92 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
         drones_config=[]
     )
 
-    # Lock interfaces to target channel
-    for iface in [tx_iface, rx_iface]:
+    # Re-assert monitor mode, channel and TX power right before transmitting. NetworkManager
+    # routinely flips an adapter back to `managed` between the pre-run setup and the run, which
+    # both kills AF_PACKET injection (TX stalls after a few cycles) and drops the TX power to a
+    # couple of dBm so a separate RX radio never hears the frames over the air. Doing it here,
+    # inside the sudo'd process and immediately before sending, closes that window.
+    def _q(cmd):
         try:
-            subprocess.run(["sudo", "iw", "dev", iface, "set", "channel", str(channel)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
-            logger.warning(f"Could not set channel {channel} on {iface}: {e}")
+            logger.warning(f"cmd failed {' '.join(cmd)}: {e}")
+
+    def _iface_info(iface):
+        return subprocess.run(["iw", "dev", iface, "info"], capture_output=True, text=True).stdout
+
+    def _chan_to_freq(ch):
+        return 2484 if ch == 14 else (2407 + ch * 5 if ch <= 13 else 5000 + ch * 5)
+
+    def _current_freq(iface):
+        # `iw dev <iface> info` prints e.g. "channel 149 (5745 MHz), width: 20 MHz" once a channel
+        # is locked; the frequency is the reliable token (absent entirely if no channel is set).
+        m = re.search(r"\((\d+)\s*MHz\)", _iface_info(iface))
+        return int(m.group(1)) if m else None
+
+    def _reg_max_txpower_mbm(iface, ch):
+        """Regulatory max TX power (mBm) allowed on `ch` for this iface's phy, or None if unknown."""
+        m = re.search(r"wiphy\s+(\d+)", _iface_info(iface))
+        if not m:
+            return None
+        phy = f"phy{m.group(1)}"
+        freq = 2484 if ch == 14 else (2407 + ch * 5 if ch <= 13 else 5000 + ch * 5)
+        out = subprocess.run(["iw", "phy", phy, "channels"], capture_output=True, text=True).stdout
+        for block in re.split(r"(?=^\s*\*\s*\d+ MHz)", out, flags=re.M):
+            if re.search(rf"\*\s*{freq} MHz \[{ch}\]", block):
+                if "(disabled)" in block:
+                    return None
+                p = re.search(r"Maximum TX power:\s*([\d.]+)\s*dBm", block)
+                return int(float(p.group(1)) * 100) if p else None
+        return None
+
+    for iface in [tx_iface, rx_iface]:
+        # Stop NM re-managing it, force monitor, lock channel. All tolerant: a 5 GHz-incapable or
+        # busy RX adapter must not abort the run.
+        _q(["sudo", "nmcli", "dev", "set", iface, "managed", "no"])
+        if _iface_info(iface).find("type monitor") == -1:
+            _q(["sudo", "ip", "link", "set", iface, "down"])
+            _q(["sudo", "iw", "dev", iface, "set", "type", "monitor"])
+            _q(["sudo", "ip", "link", "set", iface, "up"])
+        _q(["sudo", "iw", "dev", iface, "set", "channel", str(channel)])
+
+    # Verify the TRANSMITTER actually landed on the requested channel. The iw calls above are
+    # swallowed (so a 5 GHz-incapable RX never aborts the run), but if `iw set channel` silently
+    # failed on the TX adapter the radio emits nothing on air, and the capacity sweep would then
+    # report a phantom "no knee reached" (zero missed deadlines, zero airtime) while no frame was
+    # ever transmitted. Fail loudly instead.
+    want_freq = _chan_to_freq(channel)
+    tx_freq = _current_freq(tx_iface)
+    if tx_freq != want_freq:
+        raise RuntimeError(
+            f"TX adapter {tx_iface} is on {tx_freq} MHz, not the requested channel {channel} "
+            f"({want_freq} MHz): `iw dev {tx_iface} set channel {channel}` did not take (regulatory "
+            f"domain, DFS/no-IR, or no 5 GHz monitor-injection support on this driver). The radio "
+            f"would transmit nothing, so this run is aborted rather than producing a phantom "
+            f"capacity result. Check `iw reg get` and `iw dev {tx_iface} info`."
+        )
+
+    # Clamp the requested TX power to the channel's regulatory maximum. Asking for more (e.g. the
+    # 20 dBm default on a 13 dBm-capped 5 GHz channel) makes `iw set txpower` fail silently, which
+    # -- combined with monitor-mode quirks -- can leave the radio not transmitting at all.
+    eff_power_mbm = tx_power_mbm
+    reg_max_mbm = _reg_max_txpower_mbm(tx_iface, channel)
+    if reg_max_mbm is not None and tx_power_mbm > reg_max_mbm:
+        logger.warning(
+            f"Requested TX power {tx_power_mbm} mBm exceeds the regulatory maximum {reg_max_mbm} mBm "
+            f"on channel {channel}; clamping to {reg_max_mbm} mBm."
+        )
+        eff_power_mbm = reg_max_mbm
+    _q(["sudo", "iw", "dev", tx_iface, "set", "txpower", "fixed", str(int(eff_power_mbm))])
+    logger.info(f"TX power on {tx_iface} set to {eff_power_mbm} mBm ({eff_power_mbm/100.0:.0f} dBm).")
 
     # Calculate exact target evaluation cycles plus 2 buffer cycles
     target_cycles = int(round(duration / interval)) + 2
-    # Set wall-clock lifespan ceiling to a generous safety duration so evaluation is governed strictly by loop cycle count
-    safety_duration = max(300.0, (duration + (2.0 * interval)) * 5.0)
+    # Wall-clock lifespan ceiling. Normally the cycle counter (max_cycles) stops the run; this is
+    # only a safety net, kept just above the eval window (target cycles + a short margin) so that if
+    # the transmit loop ever stalls the spoofer's main loop still stops promptly instead of running
+    # for minutes.
+    safety_duration = target_cycles * interval + max(10.0, 5.0 * interval)
     drones_config = []
     base_lat, base_lng = args.location
     for _ in range(num_drones):
@@ -379,8 +470,8 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
 
     mac_to_serial: Dict[str, str] = getattr(backend, 'registered_drones', {})
 
-    valid_expected = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'expected_records', []) if 0 <= cyc < num_buckets]
-    valid_tx = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype in getattr(backend, 'tx_records', []) if 0 <= cyc < num_buckets]
+    valid_expected = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype, *_ in getattr(backend, 'expected_records', []) if 0 <= cyc < num_buckets]
+    valid_tx = [(ts, mac, mtype, cyc) for cyc, ts, mac, mtype, *_ in getattr(backend, 'tx_records', []) if 0 <= cyc < num_buckets]
 
     expected_by_mac: Dict[str, int] = dict.fromkeys(mac_to_serial.keys(), 0)
     msg_type_stats: Dict[str, Dict[str, int]] = {}
@@ -576,6 +667,7 @@ def run_experiment(tx_iface: str, rx_iface: str, num_drones: int, duration: floa
         "duration": duration,
         "interval": interval,
         "rate_mbps": rate_mbps,
+        "tx_aborted": getattr(backend, 'tx_aborted', None),
         "expected_packets": expected_total_packets,
         "tx_received_packets": total_tx_received,
         "rx_received_packets": total_rx_received,
@@ -669,6 +761,7 @@ def main():
     parser.add_argument("--compare-channels", action="store_true", help="Compare Social Channel (Ch 6 @ 2.4GHz or Ch 149 @ 5.8GHz) vs Non-Social Channel @ higher frequency")
     parser.add_argument("--non-social-channel", type=int, default=None, help="Non-social channel to compare against (default: 1 for 2.4GHz, 157 for 5.8GHz)")
     parser.add_argument("--non-social-interval", type=float, default=0.2048, help="Transmission interval for non-social channel in seconds (default: 0.2048s / 200 TUs)")
+    parser.add_argument("--tx-power", type=int, default=2000, help="TX radio power in mBm (100 mBm = 1 dBm). Default 2000 (20 dBm, full power). Use a low value (e.g. 0) for jamming-effectiveness runs so the jammer dominates.")
     parser.add_argument("--out", type=str, default="wifi_capacity_results.json", help="Output JSON file")
     parser.add_argument("--append", action="store_true", help="Append/merge new runs into existing output JSON file if it exists")
 
@@ -689,7 +782,8 @@ def main():
         for idx, count in enumerate(drone_counts):
             res = run_experiment(
                 args.tx_iface, args.rx_iface, count, args.duration, interval_val,
-                effective_rate, args.no_self_id, args.no_operator_id, channel=channel
+                effective_rate, args.no_self_id, args.no_operator_id, channel=channel,
+                tx_power_mbm=args.tx_power
             )
             phase_results.append(res)
             results.append(res)
