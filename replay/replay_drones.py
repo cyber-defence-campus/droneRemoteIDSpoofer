@@ -277,6 +277,9 @@ def main():
     parser.add_argument("--to", dest="to_ts", type=float, help="Only records received at or before this epoch time")
     parser.add_argument("--include-corrupted", action="store_true",
                         help="Also replay records with a failed CRC/FCS (skipped by default)")
+    parser.add_argument("--keep-timestamps", action="store_true",
+                        help="Replay the captured ASTM Location timestamps verbatim instead of "
+                             "re-stamping them to the current wall-clock time (default: re-stamp)")
     args = parser.parse_args()
 
     events = []
@@ -325,18 +328,20 @@ def main():
 
             messages = [base64.b64decode(m) for m in event.get("messages_b64", [])]
 
-            # Patch timestamps in Location messages (Message Type 2) to be live
-            live_now = datetime.now()
-            tenth_seconds = (live_now.minute * 600 + live_now.second * 10 + live_now.microsecond // 100000) % 6000
-            patched_messages = []
-            for msg in messages:
-                if (msg[0] >> 4) == 2 and len(msg) >= 23:
-                    msg_ba = bytearray(msg)
-                    struct.pack_into("<H", msg_ba, 21, tenth_seconds)
-                    patched_messages.append(bytes(msg_ba))
-                else:
-                    patched_messages.append(msg)
-            messages = patched_messages
+            # Patch timestamps in Location messages (Message Type 2) to be live,
+            # unless the caller asked to preserve the captured timestamps verbatim.
+            if not args.keep_timestamps:
+                live_now = datetime.now()
+                tenth_seconds = (live_now.minute * 600 + live_now.second * 10 + live_now.microsecond // 100000) % 6000
+                patched_messages = []
+                for msg in messages:
+                    if (msg[0] >> 4) == 2 and len(msg) >= 23:
+                        msg_ba = bytearray(msg)
+                        struct.pack_into("<H", msg_ba, 21, tenth_seconds)
+                        patched_messages.append(bytes(msg_ba))
+                    else:
+                        patched_messages.append(msg)
+                messages = patched_messages
 
             mac = event.get("mac")
             counter = event.get("counter", 0)
