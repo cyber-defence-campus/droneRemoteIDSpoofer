@@ -93,7 +93,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nan-cluster-id", type=str, default=None,
                         help="NAN cluster BSSID MAC string for manual injection mode (default: 50:6f:9a:01:00:ff)")
     parser.add_argument("--nan-instance-id", type=lambda x: int(x, 0), default=None,
-                        help="Transmitted Service Instance ID byte for manual injection mode (default: 0x10)")
+                        help="Transmitted Service Instance ID byte for manual injection mode (default: 0x01)")
+    parser.add_argument("--nan-rate", type=float, default=None,
+                        help="PHY transmit rate in Mbps for manual NAN injection; sets the "
+                             "radiotap rate and the Discovery Window airtime budget. NAN is OFDM, "
+                             "so values below 6 Mbps are raised to 6 (default: 6.0)")
 
     # Single-drone overrides. Applied to the one drone in manual mode and to the
     # first drone in automatic mode; the remaining random drones are unaffected.
@@ -164,7 +168,8 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                     wifi_channel: int = 6, wifi_beacon_interval: float = 0.1024,
                     nan_port: int = 8080, nan_mode: str = "bridge",
                     nan_cluster_id: str = "50:6f:9a:01:00:ff",
-                    nan_instance_id: int = 0x10,
+                    nan_instance_id: int = 0x01,
+                    nan_rate_mbps: float = 6.0,
                     update_interval: float = 1.0) -> List[TransportBackend]:
     """Create transport backend instances based on configuration.
 
@@ -207,6 +212,7 @@ def create_backends(transport: str, interface: str, ble_adapter: str,
                 channel=wifi_channel,
                 cluster_id=nan_cluster_id,
                 instance_id=nan_instance_id,
+                rate_mbps=nan_rate_mbps,
                 update_interval=update_interval
             ))
         else:
@@ -239,6 +245,7 @@ def main() -> None:
                                    nan_mode=cfg.nan_mode,
                                    nan_cluster_id=cfg.nan_cluster_id,
                                    nan_instance_id=cfg.nan_instance_id,
+                                   nan_rate_mbps=cfg.nan_rate_mbps,
                                    update_interval=cfg.interval)
         spoofer = DroneSpoofer(cfg, backends)
 

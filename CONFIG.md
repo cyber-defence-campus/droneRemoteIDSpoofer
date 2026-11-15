@@ -33,7 +33,10 @@ Note that CLI flags override config values.
   - `mode` (string): `"bridge"` (Android TCP bridge) or `"manual"` (direct Linux raw packet injection). Default: `"bridge"`.
   - `port` (int): TCP port to connect to the Android NAN Bridge when `mode` is `"bridge"`. Default: `8080`.
   - `cluster_id` (string): NAN Cluster BSSID MAC address for `manual` injection mode. Default: `"50:6f:9a:01:00:ff"`.
-  - `instance_id` (int or hex string): Transmitted Service Instance ID byte for `manual` injection mode (e.g. `16` or `"0x10"`). Default: `16` (`0x10`).
+  - `instance_id` (int or hex string): Transmitted base Service Instance ID byte for `manual` injection mode (e.g. `1` or `"0x01"`); each concurrent drone gets this base plus its index. Default: `1` (`0x01`).
+  - `rate_mbps` (float): PHY transmit rate in Mbps for `manual` injection mode; sets the radiotap rate and the Discovery Window airtime budget. Wi-Fi Aware is OFDM, so values below 6 are raised to 6. Default: `6.0`.
+
+> **Discovery Window overrun metric (airtime, not wall-clock).** In `manual` mode the backend estimates each epoch whether the anchor beacon plus every drone's SDF physically fit on-air inside the 16.384 ms Discovery Window. Each frame's airtime uses the ERP-OFDM (802.11g, 2.4 GHz) model: 20 µs PLCP preamble + the PSDU (frame bytes + 4 B FCS + 22 service/tail bits) rounded up to whole 4 µs symbols at the PHY rate + 6 µs signal extension + 28 µs DIFS + 67.5 µs expected CSMA backoff. When the modeled on-air time exceeds the window it logs an **airtime overrun** warning and increments a counter (reported again at close). This is a *modeled on-air capacity* limit — **not** a wall-clock/CPU miss (frame building and the non-blocking `send()` are not measured). At the 6 Mbps floor the window holds **~31 SDFs** (≈36 uncontended on pure-SoftMAC back-to-back injection), scaling to ~51 at 12 Mbps and ~73 at 24 Mbps. These figures are validated against a monitor-mode capture: a 277 B SDF measured 429 µs back-to-back / 501 µs median at 6 Mbps vs 430 / 497.5 µs predicted. **The PHY rate is only honored by OFDM-capable injection adapters**; some COTS chipsets ignore the radiotap rate and fall back to 1 Mbps DSSS (~2.5 ms/SDF, ~5 SDFs/DW), so verify the on-air rate with a sniffer.
 
 ## Drone fields
 Each entry in `drones` describes a single drone. Missing fields are generated
@@ -101,7 +104,7 @@ Sends on Wi-Fi and BLE simultaneously.
 ### `nan`
 Sends ASTM F3411-22 payloads via Wi-Fi NAN (Neighbor Awareness Networking / Wi-Fi Aware). Supports two modes:
 - **`bridge` mode** (default): Connects to an Android phone running the `NaN_Bridge` app via TCP, configured by `nan.port` (default `8080`, via `adb forward tcp:8080 tcp:8080`).
-- **`manual` mode**: Directly transmits IEEE 802.11 Wi-Fi Aware NAN Action Frames & Discovery Beacons via Linux raw `AF_PACKET` packet injection over a monitor mode Wi-Fi interface, requiring no Android hardware. Configurable via `nan.cluster_id` and `nan.instance_id`.
+- **`manual` mode**: Directly transmits IEEE 802.11 Wi-Fi Aware NAN Action Frames & Discovery Beacons via Linux raw `AF_PACKET` packet injection over a monitor mode Wi-Fi interface, requiring no Android hardware. Configurable via `nan.cluster_id`, `nan.instance_id` and `nan.rate_mbps`.
 
 ### `all`
 Sends on all available transports (Wi-Fi, BLE, and NAN).

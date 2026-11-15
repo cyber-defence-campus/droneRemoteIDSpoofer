@@ -215,7 +215,8 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | | `--nan-mode` | `bridge\|manual` | config or `bridge` | NAN mode: Android TCP bridge or direct Linux raw injection |
 | | `--nan-port` | `int` | config or `8080` | TCP port for the NAN Android Bridge |
 | | `--nan-cluster-id` | `str` | `50:6f:9a:01:00:ff` | NAN Cluster BSSID MAC for manual injection |
-| | `--nan-instance-id` | `int/hex` | `0x10` | NAN Service Instance ID for manual injection |
+| | `--nan-instance-id` | `int/hex` | `0x01` | NAN Service Instance ID for manual injection |
+| | `--nan-rate` | `float` | `6.0` | PHY TX rate (Mbps) for manual NAN injection; OFDM, floored at 6 |
 
 **Single-drone overrides** (applied to the drone in manual mode, or the first drone in automatic mode; the remaining random drones are unaffected). These let you fully configure one drone from the CLI without a scenario JSON:
 
