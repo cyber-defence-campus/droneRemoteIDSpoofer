@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cpbs"
+version = "0.1.0"
+description = "Proof of concept of the Conditionally Private Broadcasting Scheme for drone Remote ID"
+requires-python = ">=3.10"
+# pygroupsig is built from third_party/ by scripts/build_libgroupsig.sh
+dependencies = [
+    "pynacl>=1.5",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    "httpx>=0.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+eval = ["matplotlib>=3.7"]
+
+[tool.setuptools.packages.find]
+include = ["cpbs*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

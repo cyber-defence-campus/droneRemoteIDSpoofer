@@ -1,0 +1,8 @@
+bench/bench_groupsig
+bench/odid_refcheck
+*.egg-info/
+__pycache__/
+results/
+third_party/
+.venv/
+bench/bench_open_scale
