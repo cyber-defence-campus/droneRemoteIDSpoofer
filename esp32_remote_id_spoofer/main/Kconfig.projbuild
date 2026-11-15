@@ -1,0 +1,242 @@
+menu "Remote ID Transport Layer"
+
+    choice TRANSPORT_SELECTION
+        prompt "Select Transport Method"
+        default TRANSPORT_DUMMY
+        help
+            Select the RF transport backend for broadcasting Remote ID.
+
+        config TRANSPORT_DUMMY
+            bool "Dummy / Serial Transport (For Testing)"
+
+        config TRANSPORT_BLE
+            bool "BLE 5 Extended Advertising"
+
+        config TRANSPORT_BLE4
+            bool "BLE 4 Legacy Advertising"
+
+        config TRANSPORT_NAN
+            bool "Wi-Fi Aware (NAN)"
+
+        config TRANSPORT_WIFI_BEACON
+            bool "Wi-Fi Raw Beacon Injection"
+    endchoice
+
+    config DRONE_NAME
+        string "Drone Serial / Name (Basic ID)"
+        default "VHCI_SPOOFER12345678"
+        help
+            Max 20 characters. Used in the Basic ID message.
+
+    config OPERATOR_ID
+        string "Operator ID"
+        default "CH-1234567890123456"
+        help
+            Max 20 characters. Used in the Operator ID message.
+
+    config SELF_ID
+        string "Self ID Description"
+        default "Spoofing test"
+        help
+            Max 23 characters. Used in the Self ID message.
+
+    config WIFI_CHANNEL
+        int "Wi-Fi Channel (Beacon & NAN)"
+        range 1 14
+        default 6
+        help
+            Select the Wi-Fi operating channel (1-14). Standard for Remote ID is Channel 6.
+
+    config BEACON_INTERVAL_TU
+        int "Wi-Fi Beacon Interval (in Time Units, TU)"
+        range 20 1000
+        default 100
+        help
+            Beacon interval in Time Units (1 TU = 1.024 ms). Default is 100 TU (102.4 ms).
+
+    config NAN_CLUSTER_ID
+        string "NAN Cluster Identifier (MAC/BSSID)"
+        default "50:6F:9A:01:00:FF"
+        help
+            Wi-Fi Alliance NAN Cluster MAC/BSSID address for service discovery.
+
+    config BLE4_INTERVAL_MS
+        int "BLE 4 Legacy Advertising Interval (ms)"
+        range 20 1000
+        default 100
+        help
+            BLE Legacy advertising packet repetition interval during each message rotation window (in milliseconds).
+
+    config GPS_DUMMY_TEST_MODE
+        bool "Enable Dummy GPS Mode for Testing (Simulated Location without GPS Hardware)"
+        default n
+        help
+            When enabled, if no valid physical GPS fix is present, simulated coordinates will be supplied automatically to all Remote ID transports.
+
+    menu "Dummy GPS Trajectory Configuration"
+        depends on GPS_DUMMY_TEST_MODE
+
+        choice GPS_DUMMY_TRAJECTORY_SELECTION
+            prompt "Trajectory Type"
+            default GPS_DUMMY_TRAJECTORY_CIRCLE
+            help
+                Select the flight path for the simulated GPS fix.
+
+            config GPS_DUMMY_TRAJECTORY_STATIC
+                bool "Static Location (Stationary point in Zurich)"
+
+            config GPS_DUMMY_TRAJECTORY_CIRCLE
+                bool "Circular Trajectory (Continuous orbital circle)"
+
+            config GPS_DUMMY_TRAJECTORY_STRAIGHT
+                bool "Straight Line Trajectory (Constant speed and heading)"
+        endchoice
+
+        config GPS_DUMMY_SPEED_MPS
+            int "Flight Speed (m/s)"
+            depends on GPS_DUMMY_TRAJECTORY_CIRCLE || GPS_DUMMY_TRAJECTORY_STRAIGHT
+            range 1 50
+            default 10
+            help
+                Horizontal speed of the simulated flight path in meters per second.
+
+        config GPS_DUMMY_CIRCLE_RADIUS_M
+            int "Circle Radius (Meters)"
+            depends on GPS_DUMMY_TRAJECTORY_CIRCLE
+            range 20 5000
+            default 500
+            help
+                Radius of the simulated circular flight path in meters.
+
+        config GPS_DUMMY_STRAIGHT_HEADING_DEG
+            int "Straight Line Flight Heading (Degrees: 0=North, 90=East)"
+            depends on GPS_DUMMY_TRAJECTORY_STRAIGHT
+            range 0 359
+            default 45
+            help
+                Compass direction of the straight flight path.
+    endmenu
+
+endmenu
+
+
+menu "Spoofing Operation Mode"
+
+    choice OPERATION_MODE_SELECTION
+        prompt "Select Operation Mode"
+        default MODE_SINGLE_DRONE
+        help
+            Select the operational mode for Remote ID generation.
+
+        config MODE_SINGLE_DRONE
+            bool "Single Drone Mode (Standard)"
+            help
+                Broadcasts a single drone using base GPS coordinates and configured credentials.
+
+        config MODE_SWARM
+            bool "Swarm / Multi-Drone Mode"
+            help
+                Simulates and broadcasts a configurable swarm of drones relative to the base GPS location.
+
+        config MODE_CLONE
+            bool "Clone / Relay Mode (Sniff victim, clone identity, spoof location)"
+            help
+                Listens on the active RF interface until a drone Remote ID broadcast
+                is intercepted. Clones the victim's RF MAC address and all static ASTM
+                messages (Basic ID, Operator ID, Self ID, Pilot Location), then starts
+                broadcasting them with our own live GPS coordinates.
+    endchoice
+
+    menu "Clone Configuration"
+        depends on MODE_CLONE
+
+        choice CLONE_SNIFFER_MEDIUM_SELECTION
+            prompt "Sniffer Listening Medium"
+            default CLONE_SNIFFER_AUTO
+            help
+                Select the RF interface used to listen for victim drone broadcasts.
+
+            config CLONE_SNIFFER_AUTO
+                bool "Auto (Match selected transport medium)"
+                help
+                    Automatically sniffs on the same interface as the chosen transport.
+
+            config CLONE_SNIFFER_WIFI
+                bool "Wi-Fi Promiscuous Sniffer"
+                help
+                    Sniffs Wi-Fi channels for 802.11 Remote ID Beacons and NAN Action Frames.
+
+            config CLONE_SNIFFER_BLE
+                bool "Bluetooth Low Energy (HCI Scan)"
+                help
+                    Sniffs BLE channels for BLE 4 Legacy and BLE 5 Extended Advertising.
+        endchoice
+
+        config CLONE_TARGET_SERIAL
+            string "Target Drone Serial (leave blank to lock first drone detected)"
+            default ""
+            help
+                Optional filter: only lock onto a drone whose Basic ID contains this substring.
+                Leave empty to lock onto the first detected drone.
+
+        config CLONE_TIMEOUT_SEC
+            int "Listening Timeout in seconds (0 = wait indefinitely)"
+            range 0 3600
+            default 0
+            help
+                Maximum seconds to sniff for a drone before falling back. 0 waits indefinitely.
+    endmenu
+
+
+    menu "Swarm Configuration"
+        depends on MODE_SWARM
+
+        config SWARM_DRONE_COUNT
+            int "Number of Drones in Swarm"
+            range 2 20
+            default 5
+            help
+                Total number of simulated drones in the swarm.
+
+        config SWARM_RADIUS_DM
+            int "Swarm Scatter Radius (Decimeters: 5 = 0.5m, 10 = 1.0m, 100 = 10.0m)"
+            range 5 100
+            default 10
+            help
+                Radius in decimeters (0.1m units). Default is 10 (1.0 meter).
+
+        config SWARM_ALTITUDE_SPREAD_METERS
+            int "Altitude Spread (Meters)"
+            range 0 100
+            default 0
+            help
+                Vertical dispersion in meters above/below the base altitude. Default is 0.
+
+        choice SWARM_KINEMATICS_SELECTION
+            prompt "Swarm Kinematic Movement Model"
+            default SWARM_KINEMATICS_STATIC
+            help
+                Select how the drones move relative to the base GPS fix.
+
+            config SWARM_KINEMATICS_STATIC
+                bool "Static Offset (Drones maintain rigid relative displacement)"
+
+            config SWARM_KINEMATICS_ORBIT
+                bool "Orbital Formation (Drones smoothly orbit the center)"
+
+            config SWARM_KINEMATICS_RANDOM_WALK
+                bool "Random Walk (Drones drift smoothly bounded within the radius)"
+        endchoice
+
+        config SWARM_KINEMATICS_SPEED_MPS
+            int "Kinematic Motion Speed (x0.1 m/s: 10 = 1.0 m/s)"
+            depends on SWARM_KINEMATICS_ORBIT || SWARM_KINEMATICS_RANDOM_WALK
+            range 1 50
+            default 10
+            help
+                Speed of the simulated motion in 0.1 m/s units.
+
+    endmenu
+
+endmenu
+
