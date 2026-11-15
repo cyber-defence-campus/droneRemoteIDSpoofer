@@ -284,6 +284,15 @@ Each drone can have its own mode (`random`, `static`, `waypoints`), serial, MAC,
 
 ---
 
+## Subprojects
+
+Two self-contained subprojects live alongside the Python spoofer, each with its own README:
+
+- **[CPBS_RID/](CPBS_RID/)** — proof of concept of the Conditionally Private Broadcasting Scheme: ASTM F3411 message packs authenticated with a per-session Ed25519 key that is bound to an openable, anonymous group signature (IBM libgroupsig, BBS04 on BLS12-381). Sender, receiver, and authority run locally as separate processes over UDP/HTTP; nothing is broadcast over the air. See [CPBS_RID/README.md](CPBS_RID/README.md).
+- **[esp32_remote_id_spoofer/](esp32_remote_id_spoofer/)** — ESP-IDF (C) firmware broadcasting ASTM F3411 Remote ID across Wi-Fi beacons, BLE 4 legacy, BLE 5 extended Coded PHY, and Wi-Fi Aware / NAN, with live GPS (NMEA over UART) telemetry. Maintained in its own repository and vendored here. See [esp32_remote_id_spoofer/README.md](esp32_remote_id_spoofer/README.md).
+
+---
+
 ## Related projects
 
 - [RemoteIDReceiver](https://github.com/cyber-defence-campus/RemoteIDReceiver) — our drone monitoring system, designed to be tested with this spoofer
