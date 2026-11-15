@@ -1,0 +1,26 @@
+{
+  "description": "3 drones, one honest receiver from the start, one late joiner, one trusted receiver. Drone SN-003 is revoked and the epoch rolled over at t=20s.",
+  "duration_s": 40,
+  "config": {
+    "scheme": "bbs04",
+    "membership": "drone",
+    "freshness_s": 2.0,
+    "data_rate_hz": 1.0,
+    "heartbeat_interval_s": 3.0,
+    "session_lifetime_s": 15.0
+  },
+  "drones": [
+    {"serial": "SN-001", "operator": "CHEop0000000001"},
+    {"serial": "SN-002", "operator": "CHEop0000000002"},
+    {"serial": "SN-003", "operator": "CHEop0000000003"}
+  ],
+  "receivers": [
+    {"name": "ur-early"},
+    {"name": "ur-late", "start_s": 10},
+    {"name": "tr", "trusted": true}
+  ],
+  "events": [
+    {"at_s": 19, "action": "revoke", "member": "SN-003"},
+    {"at_s": 20, "action": "rollover"}
+  ]
+}

@@ -83,8 +83,9 @@ class SpooferConfig:
     # NAN
     nan_port: int = 8080
     nan_mode: str = "bridge"
-    nan_cluster_id: str = "50:6f:9a:01:00:00"
-    nan_instance_id: int = 0x10
+    nan_cluster_id: str = "50:6f:9a:01:00:ff"
+    nan_instance_id: int = 0x01
+    nan_rate_mbps: float = 6.0
 
     @classmethod
     def from_sources(cls, args: argparse.Namespace,
@@ -128,8 +129,9 @@ class SpooferConfig:
             nan_port=int(_resolve(args.nan_port, nan, "port", 8080, int)),
             nan_mode=str(_resolve(args.nan_mode, nan, "mode", "bridge")),
             nan_cluster_id=str(_resolve(
-                args.nan_cluster_id, nan, "cluster_id", "50:6f:9a:01:00:00")),
+                args.nan_cluster_id, nan, "cluster_id", "50:6f:9a:01:00:ff")),
             nan_instance_id=cls._resolve_instance_id(args.nan_instance_id, nan),
+            nan_rate_mbps=float(_resolve(args.nan_rate, nan, "rate_mbps", 6.0, float)),
             mac=getattr(args, "mac", None),
             ble_mac=getattr(args, "ble_mac", None),
             operator_id=getattr(args, "operator_id", None),
@@ -174,5 +176,5 @@ class SpooferConfig:
     def _resolve_instance_id(cli_value, nan_cfg: dict) -> int:
         if cli_value is not None:
             return cli_value
-        value = nan_cfg.get("instance_id", 0x10)
+        value = nan_cfg.get("instance_id", 0x01)
         return int(value, 0) if isinstance(value, str) else int(value)

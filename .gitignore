@@ -62,3 +62,6 @@ rid_packets*.jsonl
 
 
 *.bak*
+
+# LaTeX / thesis sources (kept out of the tool repo)
+*.tex

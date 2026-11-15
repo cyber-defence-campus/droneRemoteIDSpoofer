@@ -4,11 +4,11 @@ import base64
 import hashlib
 import json
 import logging
-import random
+import math
 import socket
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from scapy.all import RadioTap
 
@@ -233,7 +233,9 @@ class NanManualBackend(TransportBackend):
     """
 
     NAN_SERVICE_NAME = b"org.opendroneid.remoteid"
-    DEFAULT_CLUSTER_ID = "50:6f:9a:01:00:00"
+    DEFAULT_CLUSTER_ID = "50:6f:9a:01:00:ff"
+    # Wi-Fi Aware is an OFDM protocol; 6 Mbps is the lowest valid NAN data rate.
+    MIN_NAN_RATE_MBPS = 6.0
 
     def __init__(
         self,
@@ -241,8 +243,8 @@ class NanManualBackend(TransportBackend):
         protocol_version: int = 2,
         channel: int = 6,
         cluster_id: str = DEFAULT_CLUSTER_ID,
-        instance_id: int = 0x10,
-        rate_mbps: float = 1.0,
+        instance_id: int = 0x01,
+        rate_mbps: float = MIN_NAN_RATE_MBPS,
         update_interval: float = 1.0,
         fuzz_config: Optional[dict] = None,
     ):
@@ -252,13 +254,21 @@ class NanManualBackend(TransportBackend):
         self.channel = channel
         self.cluster_id_str = cluster_id
         self.instance_id = instance_id & 0xFF
+        # Wi-Fi Aware runs on OFDM; the lowest valid NAN data rate is 6 Mbps, so
+        # clamp anything lower (e.g. a stale 1 Mbps DSSS value) up to the floor.
+        if rate_mbps < self.MIN_NAN_RATE_MBPS:
+            logger.warning(
+                f"NAN requires OFDM >= {self.MIN_NAN_RATE_MBPS} Mbps; raising requested "
+                f"{rate_mbps} Mbps to {self.MIN_NAN_RATE_MBPS} Mbps"
+            )
+            rate_mbps = self.MIN_NAN_RATE_MBPS
         self.rate_mbps = rate_mbps
         self.update_interval = update_interval
 
         self.cluster_bssid = bytes.fromhex(self.cluster_id_str.replace(":", ""))
         if len(self.cluster_bssid) != 6:
-            logger.warning(f"Invalid cluster ID format {self.cluster_id_str}, falling back to default 50:6f:9a:01:00:00")
-            self.cluster_bssid = bytes.fromhex("506f9a010000")
+            logger.warning(f"Invalid cluster ID format {self.cluster_id_str}, falling back to default 50:6f:9a:01:00:ff")
+            self.cluster_bssid = bytes.fromhex("506f9a0100ff")
 
         self.service_id_hash = hashlib.sha256(self.NAN_SERVICE_NAME).digest()[:6]
 
@@ -271,8 +281,17 @@ class NanManualBackend(TransportBackend):
             # Fallback 8-byte minimal RadioTap header if Scapy instantiation fails
             self.radiotap_bytes = b"\x00\x00\x08\x00\x00\x00\x00\x00"
 
-        self._seq_nums: Dict[bytes, int] = {}
-        self._msg_counters: Dict[bytes, int] = {}
+        # A single NAN cluster has one anchor master and therefore one 802.11
+        # sequence-number space and one ASTM Message Pack counter, shared by the
+        # anchor's beacon and every drone's SDF (mirrors the ESP32 reference).
+        self._seq_num: int = 0
+        self._msg_counter: int = 0
+        # Distinct NAN Service Instance ID per drone: base (self.instance_id) +
+        # index assigned on first appearance, mirroring the ESP32 reference's
+        # DEFAULT_BASE_NAN_INSTANCE_ID + i. Keyed by serial so an identity keeps
+        # its instance ID for its whole lifetime.
+        self._instance_ids: dict = {}
+        self._instance_seq: int = 0
         self._running = False
         self._drones: List[DroneState] = []
         self._packet_builder: Optional[PacketBuilder] = None
@@ -280,7 +299,7 @@ class NanManualBackend(TransportBackend):
         self.missed_deadlines = 0
 
         logger.info(
-            f"NanManualBackend initialized on {self.interface} | Cluster: {self.cluster_id_str} | Instance ID: 0x{self.instance_id:02X}"
+            f"NanManualBackend initialized on {self.interface} | Cluster: {self.cluster_id_str} | Instance ID: 0x{self.instance_id:02X} | Rate: {self.rate_mbps} Mbps (OFDM, floor {self.MIN_NAN_RATE_MBPS})"
         )
 
     def _acquire(self) -> None:
@@ -318,6 +337,87 @@ class NanManualBackend(TransportBackend):
         except Exception:
             return b"\x02\x11\x22\x33\x44\x55"
 
+    def _anchor_mac(self, drones: List[DroneState]) -> bytes:
+        """Return the MAC of the NAN anchor master for the current drone set.
+
+        All spoofed drones advertise the same hardcoded Master Preference and
+        Random Factor, so the Wi-Fi Aware Master Rank reduces to the MAC compared
+        from the most-significant octet (byte 5) down to byte 0. The numerically
+        greatest MAC under that ordering is the drone that would win the anchor
+        election, and it is the only member that transmits cluster/sync/discovery
+        beacons; every other drone just sends its SDF inside that anchor's DW.
+        """
+        if not drones:
+            return self.cluster_bssid
+        return max(
+            (self._mac_str_to_bytes(d.mac_address) for d in drones),
+            key=lambda m: m[::-1],
+        )
+
+    # --- ERP-OFDM (802.11g, 2.4 GHz) airtime constants -------------------
+    # NAN runs on the 2.4 GHz social channel, so injected frames use ERP-OFDM.
+    # These match the beacon-capacity model in the thesis and were validated
+    # against a real monitor-mode capture (nRF/USB sniffer): a 277 B SDF at
+    # 6 Mbps measured 429 us back-to-back (uncontended) / 501 us median
+    # (contended), vs 430 us / 497.5 us predicted here.
+    OFDM_PREAMBLE_US = 20.0     # STF+LTF (16 us) + SIGNAL (4 us)
+    OFDM_SYMBOL_US = 4.0        # one OFDM data symbol
+    OFDM_SERVICE_TAIL_BITS = 22  # 16 SERVICE + 6 tail bits padded into symbols
+    OFDM_SIGNAL_EXT_US = 6.0    # ERP (802.11g) signal extension
+    DIFS_US = 28.0              # SIFS 10 + 2 x 9 us OFDM slot
+    # Expected uniform CSMA/CA backoff: (CWmin/2) * slot = 7.5 * 9 us. COTS
+    # FullMAC adapters apply this even for raw-injected broadcasts (measured);
+    # pure SoftMAC back-to-back injection omits it (set to 0 for that ceiling).
+    CSMA_BACKOFF_US = 67.5
+    FCS_BYTES = 4               # hardware appends a 4-byte FCS on air
+
+    def _frame_airtime_us(self, over_air_len: int) -> float:
+        """IEEE 802.11 ERP-OFDM on-air time (us) for a built frame body of
+        `over_air_len` bytes (radiotap excluded; the 4-byte hardware FCS is
+        added here since it is transmitted).
+
+        Models the PLCP preamble, the PSDU rounded up to whole 4 us OFDM
+        symbols at the configured rate (bits/symbol = rate_mbps * 4 us, i.e.
+        24 bits/symbol at 6 Mbps), the ERP signal extension, DIFS, and the
+        expected CSMA/CA backoff. This mirrors the thesis beacon-airtime model
+        and the measured per-SDF spacing; it is a capacity estimate for the DW
+        overrun check, not exact medium-access accounting.
+        """
+        if self.rate_mbps <= 0:
+            return 0.0
+        psdu_bits = (over_air_len + self.FCS_BYTES) * 8 + self.OFDM_SERVICE_TAIL_BITS
+        bits_per_symbol = self.rate_mbps * self.OFDM_SYMBOL_US
+        n_symbols = math.ceil(psdu_bits / bits_per_symbol)
+        return (self.OFDM_PREAMBLE_US + n_symbols * self.OFDM_SYMBOL_US
+                + self.OFDM_SIGNAL_EXT_US + self.DIFS_US + self.CSMA_BACKOFF_US)
+
+    def _max_sdfs_per_dw(self, dw_us: float, offset_us: float,
+                         beacon_len: int = 106, sdf_len: int = 273) -> int:
+        """How many SDFs fit in one Discovery Window after the entry offset and
+        the single anchor beacon, at the current PHY rate. Uses nominal over-air
+        frame sizes, so it is an estimate for operator feedback, not an exact cap.
+        """
+        budget = dw_us - offset_us - self._frame_airtime_us(beacon_len)
+        sdf_air = self._frame_airtime_us(sdf_len)
+        if sdf_air <= 0:
+            return 0
+        return max(0, int(budget // sdf_air))
+
+    def _instance_id_for(self, drone: DroneState) -> int:
+        """Return this drone's distinct NAN Service Instance ID.
+
+        Assigned once, the first time the drone is seen, as the configured base
+        instance ID plus a monotonically increasing index (wrapped to a byte) so
+        concurrently-active drones never share an instance ID. Mirrors the ESP32
+        reference, where swarm member i uses DEFAULT_BASE_NAN_INSTANCE_ID + i.
+        """
+        iid = self._instance_ids.get(drone.serial)
+        if iid is None:
+            iid = (self.instance_id + self._instance_seq) & 0xFF
+            self._instance_seq += 1
+            self._instance_ids[drone.serial] = iid
+        return iid
+
     def _build_nan_beacon(
         self,
         drone_mac: bytes,
@@ -341,12 +441,12 @@ class NanManualBackend(TransportBackend):
         fixed_params = timestamp_bytes + beacon_interval_bytes + capabilities
 
         # 3. Wi-Fi Aware Vendor Specific IE (OUI 50:6F:9A, Type 0x13)
-        # Master Indication Attribute (Attr ID 0, length 2, Pref 254, Random 0xDF)
-        master_ind = b"\x00\x02\x00\xfe\xdf"
+        # Master Indication Attribute (Attr ID 0, length 2, Pref 254, Random 0xEA)
+        master_ind = b"\x00\x02\x00\xfe\xea"
 
         # NAN Cluster Attribute (Attr ID 1, length 13)
         ambtt_bytes = (ambtt_us & 0xFFFFFFFF).to_bytes(4, "little", signed=False)
-        nan_cluster_attr = b"\x01\x0d\x00" + drone_mac + b"\xdf\xfe\x00" + ambtt_bytes
+        nan_cluster_attr = b"\x01\x0d\x00" + drone_mac + b"\xea\xfe\x00" + ambtt_bytes
 
         # Country Code Attribute (Attr ID 11, length 2, "CH")
         country_code = b"\x0b\x02\x00CH"
@@ -371,12 +471,15 @@ class NanManualBackend(TransportBackend):
         drone_mac: bytes,
         messages: List[bytes],
         counter: int,
-        seq_num: int
+        seq_num: int,
+        instance_id: int,
     ) -> bytes:
         """Construct raw NAN Service Discovery Frame (SDF) with dynamic SDEA Service Update Indicator."""
         # 1. 802.11 MAC Header (24 bytes) - Action Frame (Subtype 13)
         fc_duration = b"\xd0\x00\x00\x00"
-        dest_addr = b"\xff\xff\xff\xff\xff\xff"
+        # NAN Network ID (NAN spec v3.0 Sec 2.8.1): SDFs are addressed to the
+        # NAN group address 51:6F:9A:01:00:00, not generic broadcast.
+        dest_addr = b"\x51\x6f\x9a\x01\x00\x00"
         seq_ctrl = (seq_num << 4).to_bytes(2, "little")
         mac_header = fc_duration + dest_addr + drone_mac + self.cluster_bssid + seq_ctrl
 
@@ -399,13 +502,13 @@ class NanManualBackend(TransportBackend):
         sda_header = (
             b"\x03\x8b\x00"
             + self.service_id_hash
-            + bytes([self.instance_id, 0x00, 0x10, len(service_info) & 0xFF])
+            + bytes([instance_id & 0xFF, 0x00, 0x10, len(service_info) & 0xFF])
         )
         sda_attr = sda_header + service_info
 
         # 4. Service Descriptor Extension Attribute (SDEA) - Attr ID 14 (0x0E), len 4
         # Service Update Indicator equals ODID counter to defeat receiver OS frame deduplication
-        sdea_attr = b"\x0e\x04\x00" + bytes([self.instance_id, 0x00, 0x02, counter & 0xFF])
+        sdea_attr = b"\x0e\x04\x00" + bytes([instance_id & 0xFF, 0x00, 0x02, counter & 0xFF])
 
         # 5. Additional mandatory NAN attributes
         country_code = b"\x0b\x02\x00CH"
@@ -423,6 +526,12 @@ class NanManualBackend(TransportBackend):
 
         # 512 TU epoch = 524,288 us = 0.524288 seconds
         TSF_EPOCH_US = 524288
+        # 16 TU Discovery Window. SDFs must clear this window or receivers,
+        # whose radios are only awake during the DW, never hear them.
+        DW_DURATION_US = 16384
+        # Fixed delay after the DW start (TBTT) before transmitting, so frames
+        # land once receivers are actually listening instead of at exactly t=0.
+        DW_ENTRY_OFFSET_US = 300
         target_offsets_us = [0, 105000, 210000, 315000, 420000]
         slot = 0
         loop_counter = 0
@@ -438,8 +547,9 @@ class NanManualBackend(TransportBackend):
                     current_epoch += 1
                     target_time_us = (current_epoch * TSF_EPOCH_US) + target_offsets_us[slot]
                 else:
-                    self.missed_deadlines += 1
-                    logger.debug(f"NAN slot {slot} deadline missed")
+                    # Inter-DW discovery beacon slots run outside the DW, so a
+                    # late one is still received: skip ahead without counting it
+                    # as a miss (only DW overruns lose frames).
                     slot = (slot + 1) % len(target_offsets_us)
                     continue
 
@@ -451,77 +561,113 @@ class NanManualBackend(TransportBackend):
             tsf_us = int(now_ts * 1_000_000) % (2**64)
             ambtt_us = (current_epoch * TSF_EPOCH_US) & 0xFFFFFFFF
 
-            for drone, messages in self._active_packets():
-                serial = drone.serial
-                drone_mac = self._mac_str_to_bytes(drone.mac_address)
+            # One NAN cluster has exactly one anchor master, so a single drone
+            # emits every beacon. The anchor is the active drone with the highest
+            # Master Rank (hardcoded equal preference/random factor => MAC
+            # tie-break); all other drones only inject their SDF inside the
+            # anchor's Discovery Window.
+            active = self._active_packets()
+            anchor_mac = self._anchor_mac([d for d, _ in active])
+            counter = self._msg_counter
 
-                seq_num = self._seq_nums.get(serial, 0)
-                counter = self._msg_counters.get(serial, 0)
+            radiotap_len = len(self.radiotap_bytes)
 
-                # Slot 0 represents the active Discovery Window (DW)
-                if slot == 0:
-                    # Early-DW contention jitter (200 us - 600 us) before Sync Beacon TX
-                    time.sleep(0.0002 + random.random() * 0.0004)
+            if slot == 0:
+                # Small fixed offset (not jitter) so the burst lands just inside
+                # the DW rather than at exactly t=0, when receivers may still be
+                # waking or hopping to the channel. No randomness is needed: a
+                # single radio injects every frame sequentially, so our own
+                # frames can never self-collide.
+                time.sleep(DW_ENTRY_OFFSET_US / 1_000_000.0)
+                burst_air_us = float(DW_ENTRY_OFFSET_US)
 
-                    # 1. Inject Synchronization Beacon inside DW
-                    beacon_pkt = self._build_nan_beacon(drone_mac, True, seq_num, tsf_us, ambtt_us)
-                    try:
-                        self._sock.send(beacon_pkt)
-                    except Exception as e:
-                        logger.debug(f"NAN Manual Beacon TX error: {e}")
+                # 1. Inject ONE Synchronization Beacon from the anchor master
+                beacon_pkt = self._build_nan_beacon(anchor_mac, True, self._seq_num, tsf_us, ambtt_us)
+                try:
+                    self._sock.send(beacon_pkt)
+                except Exception as e:
+                    logger.debug(f"NAN Manual Beacon TX error: {e}")
+                self._seq_num = (self._seq_num + 1) % 4096
+                burst_air_us += self._frame_airtime_us(len(beacon_pkt) - radiotap_len)
 
-                    seq_num = (seq_num + 1) % 4096
-
-                    # Intra-DW CSMA/CA contention jitter (500 us - 10,000 us) before SDF injection
-                    time.sleep(0.0005 + random.random() * 0.0095)
-
-                    # 2. Inject Service Discovery Frame (SDF) inside DW
+                # 2. Burst every drone's SDF inside the anchor's Discovery Window,
+                # back to back. The frames are serialized by the single TX radio,
+                # so there is no self-collision to space out and no CSMA backoff
+                # to emulate; a tight burst also maximises DW headroom.
+                for drone, messages in active:
+                    drone_mac = self._mac_str_to_bytes(drone.mac_address)
                     if self.fuzz_config and self.fuzz_config.get("raw_injection"):
                         # SPARROW-03 PoC: Bypass SDF construction and inject raw malformed IEEE 802.11 byte array directly
                         # We must include the radiotap header for the monitor mode socket to accept it
                         sdf_pkt = getattr(self, "radiotap_bytes", b"") + b"".join(messages)
                     else:
-                        sdf_pkt = self._build_nan_sdf(drone, drone_mac, messages, counter, seq_num)
+                        sdf_pkt = self._build_nan_sdf(
+                            drone, drone_mac, messages, counter,
+                            self._seq_num, self._instance_id_for(drone),
+                        )
 
                     try:
                         self._sock.send(sdf_pkt)
                     except Exception as e:
                         logger.debug(f"NAN Manual SDF TX error: {e}")
+                    self._seq_num = (self._seq_num + 1) % 4096
+                    burst_air_us += self._frame_airtime_us(len(sdf_pkt) - radiotap_len)
 
-                    seq_num = (seq_num + 1) % 4096
-                    self._seq_nums[serial] = seq_num
+                # DW capacity check. sock.send() is non-blocking (it only queues
+                # to the driver), so wall-clock after the loop does NOT reflect
+                # when frames actually leave the antenna. Instead compare the
+                # burst's estimated on-air time against the 16 TU window: if the
+                # beacon + all SDFs cannot physically fit at the current PHY rate,
+                # the trailing frames transmit after the DW closes and are lost on
+                # receivers that only wake for the DW. Count one miss per overrun.
+                if burst_air_us > DW_DURATION_US:
+                    self.missed_deadlines += 1
+                    # Log every overrun, matching the Wi-Fi/BLE backends which warn
+                    # on each missed deadline. A NAN capacity overrun is usually
+                    # persistent (it repeats every epoch while the drone count stays
+                    # high), so the stream of warnings is itself the signal.
+                    logger.warning(
+                        f"NAN Discovery Window AIRTIME overrun: {len(active)} SDFs need "
+                        f"~{burst_air_us / 1000:.1f} ms of on-air time but the "
+                        f"{DW_DURATION_US / 1000:.1f} ms window at {self.rate_mbps} Mbps "
+                        f"only fits ~{self._max_sdfs_per_dw(DW_DURATION_US, DW_ENTRY_OFFSET_US)} "
+                        f"SDFs; trailing frames are modeled to fall outside the DW and be lost. "
+                        f"NOTE: this is a modeled ERP-OFDM on-air capacity miss (symbol-rounded "
+                        f"airtime + DIFS + expected CSMA backoff), NOT a wall-clock/CPU processing "
+                        f"miss (total airtime overruns: {self.missed_deadlines})"
+                    )
 
-                else:
-                    # Slots 1..4: Inter-DW Discovery Beacons (100 TU interval)
-                    beacon_pkt = self._build_nan_beacon(drone_mac, False, seq_num, tsf_us, ambtt_us)
-                    try:
-                        self._sock.send(beacon_pkt)
-                    except Exception as e:
-                        logger.debug(f"NAN Manual Discovery Beacon TX error: {e}")
-
-                    seq_num = (seq_num + 1) % 4096
-                    self._seq_nums[serial] = seq_num
+            else:
+                # Slots 1..4: ONE Inter-DW Discovery Beacon from the anchor master
+                beacon_pkt = self._build_nan_beacon(anchor_mac, False, self._seq_num, tsf_us, ambtt_us)
+                try:
+                    self._sock.send(beacon_pkt)
+                except Exception as e:
+                    logger.debug(f"NAN Manual Discovery Beacon TX error: {e}")
+                self._seq_num = (self._seq_num + 1) % 4096
 
             # Advance slot state
             slot = (slot + 1) % len(target_offsets_us)
             if slot == 0:
                 loop_counter += 1
-                # Increment ODID message counter roughly every 1 second (2 epochs)
+                # Increment the shared ODID message counter ~every 1 second (2 epochs)
                 if loop_counter >= 2:
                     loop_counter = 0
-                    for drone in self._drones:
-                        s = drone.serial
-                        c = self._msg_counters.get(s, 0)
-                        self._msg_counters[s] = (c + 1) & 0xFF
+                    self._msg_counter = (self._msg_counter + 1) & 0xFF
 
         # Loop exited: this thread owns the socket, so it closes it here rather
         # than letting close() touch it concurrently.
         self._close_socket()
 
     def _cleanup_drone(self, drone: DroneState) -> None:
-        """Remove state for expired drone in manual injection backend (transmit thread)."""
-        self._seq_nums.pop(drone.serial, None)
-        self._msg_counters.pop(drone.serial, None)
+        """Handle an expired drone in the manual injection backend (transmit thread).
+
+        Sequence numbers and the ASTM counter are now cluster-wide (one anchor
+        master), so the only per-drone state is the assigned NAN Service Instance
+        ID. If the departing drone was the anchor master, the next loop iteration
+        simply re-elects the new highest-MAC survivor via `_anchor_mac`.
+        """
+        self._instance_ids.pop(drone.serial, None)
 
     def close(self) -> None:
         """Stop the transmission loop and release the raw socket.
@@ -536,7 +682,16 @@ class NanManualBackend(TransportBackend):
         else:
             self._close_socket()
         restore_managed_mode(self.interface)
-        logger.info("NanManualBackend closed.")
+        if self.missed_deadlines:
+            logger.warning(
+                f"NanManualBackend closed. {self.missed_deadlines} Discovery Window "
+                f"AIRTIME overrun(s) occurred - the modeled on-air time of the SDF burst "
+                f"exceeded the 16.384 ms window (frame bytes / PHY rate), so trailing SDFs "
+                f"are expected to land outside the DW. This is a modeled on-air capacity "
+                f"limit, not a wall-clock/CPU miss; reduce drone count or raise the PHY rate."
+            )
+        else:
+            logger.info("NanManualBackend closed.")
 
     def _close_socket(self) -> None:
         """Close the raw socket (transmit thread on loop exit, or close())."""

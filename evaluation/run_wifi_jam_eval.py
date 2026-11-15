@@ -46,9 +46,10 @@ def main():
     default_jam_script = os.path.expanduser("~/gnuradio/wifijam.py")
 
     parser = argparse.ArgumentParser(description="Run Wi-Fi Evaluation and trigger GNU Radio Jammer after a delay")
-    parser.add_argument("--tx-iface", default="wlx00c0ca9910ea", help="TX monitor interface")
-    parser.add_argument("--rx-iface", default="wlx00c0cabb1654", help="RX monitor interface")
+    parser.add_argument("--tx-iface", default="wlx289401bca9d1", help="TX monitor interface")
+    parser.add_argument("--rx-iface", default="wlx00c0ca9910ea", help="RX monitor interface")
     parser.add_argument("--channel", type=int, default=6, help="Wi-Fi channel (default: 6)")
+    parser.add_argument("--tx-power", type=int, default=2000, help="TX radio power in mBm (100=1 dBm). Default 2000 (20 dBm). Use low (e.g. 0) so the jammer dominates.")
     parser.add_argument("--duration", type=float, default=20.0, help="Evaluation duration in seconds (default: 20.0)")
     parser.add_argument("--drones", type=str, default="300", help="Drone count (default: 10)")
     parser.add_argument("--delay", type=float, default=5.0, help="Delay before starting jammer in seconds (default: 2.0)")
@@ -94,6 +95,7 @@ def main():
         "--tx-iface", args.tx_iface,
         "--rx-iface", args.rx_iface,
         "--channel", str(args.channel),
+        "--tx-power", str(args.tx_power),
         "--duration", str(args.duration),
         "--drones", str(args.drones),
         "--out", args.out
@@ -216,7 +218,7 @@ def main():
         stop_child_proc(jam_proc, "jammer")
         if not eval_log_f.closed:
             eval_log_f.close()
-        if not jam_log_f.closed:
+        if jam_log_f and not jam_log_f.closed:
             jam_log_f.close()
 
     # 6. Generate plots

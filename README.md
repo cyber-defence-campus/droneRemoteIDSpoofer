@@ -214,8 +214,9 @@ For full architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | | `--wifi-beacon-interval` | `float` | config or `0.1024` | Wi-Fi beacon transmission interval in seconds |
 | | `--nan-mode` | `bridge\|manual` | config or `bridge` | NAN mode: Android TCP bridge or direct Linux raw injection |
 | | `--nan-port` | `int` | config or `8080` | TCP port for the NAN Android Bridge |
-| | `--nan-cluster-id` | `str` | `50:6f:9a:01:00:00` | NAN Cluster BSSID MAC for manual injection |
-| | `--nan-instance-id` | `int/hex` | `0x10` | NAN Service Instance ID for manual injection |
+| | `--nan-cluster-id` | `str` | `50:6f:9a:01:00:ff` | NAN Cluster BSSID MAC for manual injection |
+| | `--nan-instance-id` | `int/hex` | `0x01` | NAN Service Instance ID for manual injection |
+| | `--nan-rate` | `float` | `6.0` | PHY TX rate (Mbps) for manual NAN injection; OFDM, floored at 6 |
 
 **Single-drone overrides** (applied to the drone in manual mode, or the first drone in automatic mode; the remaining random drones are unaffected). These let you fully configure one drone from the CLI without a scenario JSON:
 
@@ -280,6 +281,15 @@ Each drone can have its own mode (`random`, `static`, `waypoints`), serial, MAC,
 | `ble_stress_test.json` | 20 drones over BLE |
 | `dual_transport.json` | Wi-Fi + BLE simultaneously |
 | `stress_test.json` | 20 drones over Wi-Fi |
+
+---
+
+## Subprojects
+
+Two self-contained subprojects live alongside the Python spoofer, each with its own README:
+
+- **[CPBS_RID/](CPBS_RID/)** — proof of concept of the Conditionally Private Broadcasting Scheme: ASTM F3411 message packs authenticated with a per-session Ed25519 key that is bound to an openable, anonymous group signature (IBM libgroupsig, BBS04 on BLS12-381). Sender, receiver, and authority run locally as separate processes over UDP/HTTP; nothing is broadcast over the air. See [CPBS_RID/README.md](CPBS_RID/README.md).
+- **[esp32_remote_id_spoofer/](esp32_remote_id_spoofer/)** — ESP-IDF (C) firmware broadcasting ASTM F3411 Remote ID across Wi-Fi beacons, BLE 4 legacy, BLE 5 extended Coded PHY, and Wi-Fi Aware / NAN, with live GPS (NMEA over UART) telemetry. Maintained in its own repository and vendored here. See [esp32_remote_id_spoofer/README.md](esp32_remote_id_spoofer/README.md).
 
 ---
 

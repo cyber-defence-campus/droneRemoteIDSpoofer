@@ -158,6 +158,14 @@ sudo ./attacks/takeover/cts_inject wlan1 random 32767
 sudo ./attacks/takeover/cts_inject wlan1 00:11:22:33:44:55 32767
 ```
 
+### Optional: passively record received RID beacon counts
+Use a **separate Wi-Fi interface** in monitor mode, tuned to the same channel as the experiment. This helper only listens; it does not change interface settings or transmit. It appends one CSV row per interval, including the interval count and cumulative count:
+```bash
+sudo .venv/bin/python evaluation/wifi_rid_monitor.py \
+  --interface wlan2 --interval 1 --output evaluation/data/experiment7-rid-counts.csv
+```
+Stop with `Ctrl+C`. Use `--duration 60` to stop automatically after 60 seconds. The output CSV can be compared with the experiment timeline to check whether RID beacons are still being received.
+
 ---
 
 ## 8. Ephemeral Swarm Saturation (Rapid Identity & MAC Rotation)

@@ -1,0 +1,16 @@
+# IDE & Editor Configurations
+.vscode/
+.clangd/
+.clangd
+.idea/
+*.swp
+*.~*
+
+# ESP-IDF Build & Temporary Files
+build/
+sdkconfig.old
+*.tmp
+sdkconfig
+
+# Operating System & Misc
+.DS_Store

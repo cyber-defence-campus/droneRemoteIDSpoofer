@@ -33,6 +33,11 @@ class WifiBackend(TransportBackend):
         self.protocol_version = protocol_version
         self.channel = channel
         self.beacon_interval = beacon_interval
+        # 802.11 Beacon Interval field is a 16-bit count of Time Units (1 TU =
+        # 1024 us), so it can only express whole TUs. The send loop paces off the
+        # full-precision float above; this is just the on-the-wire advertised
+        # value, quantized to the nearest TU (floored at 1 so we never claim 0).
+        self._beacon_interval_tu = max(1, round(self.beacon_interval / 0.001024))
         self.rate_mbps = rate_mbps
         self._sock = None
 
@@ -118,7 +123,11 @@ class WifiBackend(TransportBackend):
             current_tsf = int(time.time() * 1000000) % (2**64)
 
             # Beacon Base (Timestamp & Cap) is identical for all drones in the same batch
-            beacon_base_bytes = bytes(dot11.Dot11Beacon(cap='ESS' if self.ess else 0, timestamp=current_tsf))
+            beacon_base_bytes = bytes(dot11.Dot11Beacon(
+                cap='ESS' if self.ess else 0,
+                timestamp=current_tsf,
+                beacon_interval=self._beacon_interval_tu,
+            ))
 
             t_build_start = time.time()
             for drone, messages in self._active_packets():
